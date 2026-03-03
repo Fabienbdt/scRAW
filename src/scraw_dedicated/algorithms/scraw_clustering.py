@@ -21,6 +21,7 @@ def remap_contiguous_labels(labels: np.ndarray) -> np.ndarray:
     Returns:
         Valeur calculée par la fonction.
     """
+    # Remappe les IDs de clusters vers 0..K-1 pour simplifier l'export et les métriques.
     labels = np.asarray(labels)
     uniq = sorted(np.unique(labels).tolist())
     mapping = {int(v): i for i, v in enumerate(uniq)}
@@ -56,9 +57,11 @@ class ScrawClusteringMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Si l'utilisateur fournit K explicitement, on le respecte.
         k_user = int(self._param("n_clusters", 0) or 0)
         if k_user > 1:
             return min(max(2, k_user), max(2, n_cells - 1))
+        # Sinon, heuristique simple robuste pour un pseudo-K raisonnable.
         k = int(np.sqrt(max(n_cells, 2)) / 2.0)
         k = max(2, min(40, k))
         return min(k, max(2, n_cells - 1))
@@ -77,6 +80,7 @@ class ScrawClusteringMixin:
 
         n_cells = embeddings.shape[0]
         k = self._estimate_k(n_cells)
+        # KMeans sert de méthode pseudo-label stable et rapide.
         km = KMeans(n_clusters=k, random_state=int(self._param("seed", 42)), n_init=10)
         labels = km.fit_predict(embeddings)
         return remap_contiguous_labels(labels)
@@ -98,6 +102,7 @@ class ScrawClusteringMixin:
         if n_cells < 3:
             return np.zeros(n_cells, dtype=np.int64)
 
+        # Leiden est appliqué sur un graphe de voisins construit dans l'espace latent.
         adata = ad.AnnData(X=np.asarray(embeddings, dtype=np.float32))
         n_neighbors = max(5, min(30, n_cells - 1))
         sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X")
@@ -124,6 +129,7 @@ class ScrawClusteringMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Pendant l'entraînement, on calcule des pseudo-labels pour pondération + triplet.
         method = str(self._param("pseudo_label_method", "leiden")).strip().lower()
         if self._pseudo_fallback_method is not None:
             method = self._pseudo_fallback_method
@@ -134,6 +140,7 @@ class ScrawClusteringMixin:
         try:
             return self._leiden_pseudo_labels(embeddings)
         except Exception as exc:
+            # Si Leiden casse une fois, on bascule définitivement sur KMeans pour ce run.
             if not self._leiden_warning_emitted:
                 logger.warning(
                     "pseudo_label_method=leiden failed once (%s); falling back to KMeans for the rest of the run.",
@@ -153,6 +160,7 @@ class ScrawClusteringMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Clustering final utilisé pour les labels prédits exportés.
         min_cluster_size = int(self._param("hdbscan_min_cluster_size", 4) or 4)
         min_samples = int(self._param("hdbscan_min_samples", 2) or 2)
         method = str(self._param("hdbscan_cluster_selection_method", "eom"))
@@ -168,10 +176,12 @@ class ScrawClusteringMixin:
             )
             labels = np.asarray(clusterer.fit_predict(embeddings), dtype=np.int64)
         except Exception as exc:
+            # Fallback de sécurité si HDBSCAN n'est pas disponible sur l'environnement.
             logger.warning("HDBSCAN unavailable/failed (%s); fallback to KMeans.", exc)
             labels = self._kmeans_pseudo_labels(embeddings)
 
         if reassign_noise and np.any(labels < 0):
+            # Optionnel: réassigner les points "bruit" au cluster le plus proche.
             labels = self._reassign_noise_to_centroids(embeddings, labels)
 
         if np.any(labels < 0):
@@ -191,6 +201,7 @@ class ScrawClusteringMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Étape post-HDBSCAN: les points -1 (bruit) sont rattachés au centroïde le plus proche.
         labels = np.asarray(labels, dtype=np.int64).copy()
         keep = labels >= 0
         if not np.any(keep):

@@ -56,6 +56,7 @@ def gradient_reversal(x: torch.Tensor, lambda_: float = 1.0) -> torch.Tensor:
     Returns:
         Valeur calculée par la fonction.
     """
+    # On passe explicitement lambda sur le bon device pour éviter les mismatch CPU/GPU.
     lam = torch.tensor(float(lambda_), dtype=torch.float32, device=x.device)
     return _GradientReversalFunction.apply(x, lam)
 
@@ -82,6 +83,7 @@ class MLPAutoencoder(nn.Module):
             Valeur calculée par la fonction.
         """
         super().__init__()
+        # Construction de l'encodeur: réduction progressive vers l'espace latent.
         enc: List[nn.Module] = []
         prev = shape.input_dim
         for h in shape.hidden_layers:
@@ -89,6 +91,7 @@ class MLPAutoencoder(nn.Module):
             prev = h
         enc.append(nn.Linear(prev, shape.z_dim))
 
+        # Construction du décodeur: symétrique de l'encodeur pour reconstruire l'entrée.
         dec: List[nn.Module] = []
         prev = shape.z_dim
         for h in reversed(shape.hidden_layers):
@@ -122,6 +125,7 @@ def parse_hidden_layers(raw: Any) -> List[int]:
     Returns:
         Valeur calculée par la fonction.
     """
+    # Accepte soit une liste Python, soit une chaîne "512,256,128".
     if isinstance(raw, (list, tuple)):
         vals = [int(x) for x in raw if int(x) > 0]
         return vals or [512, 256, 128]
@@ -275,6 +279,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         Returns:
             Valeur calculée par la fonction.
         """
+        # Supporte AnnData (data.X) ou matrice numpy directe.
         X = data.X if hasattr(data, "X") else data
         if hasattr(X, "toarray"):
             X = X.toarray()
@@ -292,6 +297,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         Returns:
             Valeur calculée par la fonction.
         """
+        # Lit les hyperparamètres réseau puis instancie l'autoencodeur MLP.
         shape = NetworkShape(
             input_dim=int(input_dim),
             hidden_layers=parse_hidden_layers(self.params.get("hidden_layers", "512,256,128")),
@@ -303,7 +309,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
 
     def _encode_numpy(self, X: np.ndarray, batch_size: int = 2048) -> np.ndarray:
         """Helper interne: encode numpy.
-        
         
         Args:
             X: Paramètre d'entrée `X` utilisé dans cette étape du pipeline.
@@ -318,6 +323,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         self.model.to(device)
         self.model.eval()
 
+        # Encodage par mini-batch pour limiter la mémoire sur grands jeux de données.
         parts: List[np.ndarray] = []
         with torch.no_grad():
             for i in range(0, X.shape[0], batch_size):
@@ -330,7 +336,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
 
     def fit(self, data: Any, labels: Optional[Any] = None) -> "BaseAutoencoderAlgorithm":
         """Entraîne le modèle sur les données fournies.
-        
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.

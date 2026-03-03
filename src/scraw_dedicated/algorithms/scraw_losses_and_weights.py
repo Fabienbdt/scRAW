@@ -23,6 +23,7 @@ def _to_numpy(x: Any, dtype: np.dtype | None = None) -> np.ndarray:
     Returns:
         Valeur calculée par la fonction.
     """
+    # Uniformise les entrées sparse/dense vers un tableau numpy dense.
     if hasattr(x, "toarray"):
         x = x.toarray()
     arr = np.asarray(x)
@@ -58,13 +59,16 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Cette fonction construit la "vérité terrain" de reconstruction.
         dist = str(self._param("reconstruction_distribution", "nb")).strip().lower()
         transform = str(self._param("nb_input_transform", "log1p")).strip().lower()
         theta = float(self._param("nb_theta", 10.0))
 
         if dist != "nb":
+            # Mode simple: on reconstruit directement la matrice prétraitée (MSE).
             return np.asarray(X_proc, dtype=np.float32), "mse"
 
+        # Mode NB: on privilégie les comptes bruts si disponibles.
         if hasattr(data, "layers") and "original_X" in data.layers:
             target = _to_numpy(data.layers["original_X"], dtype=np.float32)
         else:
@@ -73,6 +77,7 @@ class ScrawLossWeightMixin:
 
         target = np.clip(target, 0.0, None)
 
+        # Optionnel: transformation de la cible NB (none / log1p / résidus de Pearson).
         if transform == "none":
             pass
         elif transform == "log1p":
@@ -100,6 +105,7 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Résidus de Pearson standardisés pour stabiliser la variance gène par gène.
         clip = float(self._param("pearson_residual_clip", 10.0))
         X = np.clip(np.asarray(counts, dtype=np.float64), 0.0, None)
         if X.size == 0:
@@ -128,6 +134,7 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Pondération globale: plus un cluster est rare, plus son poids augmente.
         labels = np.asarray(pseudo_labels, dtype=np.int64)
         n = labels.shape[0]
         if n == 0:
@@ -160,6 +167,7 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Pondération locale: cellules isolées en latent => poids plus fort.
         from sklearn.neighbors import NearestNeighbors
 
         n = embeddings.shape[0]
@@ -200,6 +208,7 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Fusion pondération globale (fréquence) + locale (densité).
         w_cluster = self._cluster_frequency_weights(pseudo_labels)
         w_density = self._density_weights(embeddings)
 
@@ -207,6 +216,7 @@ class ScrawLossWeightMixin:
         alpha = float(np.clip(alpha, 0.0, 1.0))
         w = (1.0 - alpha) * w_cluster + alpha * w_density
 
+        # Clamp final pour contrôler la stabilité numérique à l'entraînement.
         w_min = float(self._param("min_cell_weight", 1.0))
         w_max = float(self._param("max_cell_weight", 10.0))
         if w_max < w_min:
@@ -225,6 +235,7 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Masquage type denoising autoencoder.
         if rate <= 0.0:
             return x
         keep = torch.rand_like(x) >= rate
@@ -247,6 +258,7 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Perte NB calculée par cellule puis moyennée sur les gènes.
         target = torch.clamp(target, min=0.0)
         mu = torch.nn.functional.softplus(recon_raw) + 1e-4
         theta_t = torch.tensor(float(theta), device=mu.device, dtype=mu.dtype)
@@ -278,6 +290,7 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Point d'aiguillage unique entre NB et MSE.
         if mode == "nb":
             return self._negative_binomial_loss_per_sample(
                 target=target,
@@ -303,6 +316,8 @@ class ScrawLossWeightMixin:
         Returns:
             Valeur calculée par la fonction.
         """
+        # Régularisation rare: rapproche les cellules d'un même pseudo-cluster rare
+        # et éloigne les cellules d'autres clusters.
         if z.shape[0] < 3:
             return torch.tensor(0.0, device=z.device)
 
@@ -312,6 +327,7 @@ class ScrawLossWeightMixin:
 
         labels = np.asarray(pseudo_labels_batch, dtype=np.int64)
         rare_mask = weights_batch.detach().cpu().numpy() >= min_w
+        # On ne retient que les ancres suffisamment pondérées comme "rares".
         candidate = np.where(rare_mask)[0]
         if candidate.size == 0:
             return torch.tensor(0.0, device=z.device)

@@ -537,6 +537,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         Returns:
             Valeur calculée par la fonction.
         """
+        # Prépare les IDs batch nécessaires à la branche adversariale (DANN).
         use_batch = bool(self._param("use_batch_conditioning", False))
         adv_w = float(self._param("adversarial_batch_weight", 0.0) or 0.0)
         if not use_batch and adv_w <= 0.0:
@@ -578,6 +579,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         Returns:
             Valeur calculée par la fonction.
         """
+        # Chaque snapshot contient embeddings + poids cellule au même epoch.
         self._embedding_snapshots.append(
             {
                 "epoch": int(epoch),
@@ -598,6 +600,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         Returns:
             Valeur calculée par la fonction.
         """
+        # Encodage complet du dataset, utilisé pour pseudo-labels et export final.
         return self._encode_numpy(X, batch_size=max(512, int(self._param("batch_size", 256))))
 
     def fit(self, data: Any, labels: Optional[Any] = None) -> "ScRAWAlgorithm":
@@ -611,9 +614,11 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         Returns:
             Valeur calculée par la fonction.
         """
+        # 1) Initialisation déterministe pour rendre le run reproductible.
         seed = int(self._param("seed", self._param("random_state", 42)))
         self._set_seed(seed)
 
+        # 2) Chargement des matrices d'entrée et de reconstruction.
         X = self._as_numpy_matrix(data)
         n_cells, n_features = X.shape
 
@@ -623,9 +628,11 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                 f"Reconstruction target shape {recon_target.shape} does not match input shape {X.shape}."
             )
 
+        # 3) Optionnel: extraction du batch pour DANN.
         batch_ids_np, n_batches, batch_key = self._infer_batch_ids(data, n_cells)
         self._batch_info = (batch_key, int(n_batches))
 
+        # 4) Construction du modèle autoencodeur principal.
         model = self._build_model(input_dim=n_features)
         device = torch.device(self.get_device())
         model.to(device)
@@ -635,6 +642,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
 
         batch_head: Optional[nn.Module] = None
         if use_batch and adv_weight > 0.0 and n_batches >= 2:
+            # Tête de classification batch utilisée avec gradient reversal.
             z_dim = int(self._param("z_dim", 128))
             hidden = max(8, z_dim // 2)
             batch_head = nn.Sequential(
@@ -650,6 +658,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         if batch_head is not None:
             params += list(batch_head.parameters())
 
+        # 5) Optimiseur commun (autoencodeur + tête DANN si active).
         optimizer = torch.optim.Adam(params, lr=float(self._param("lr", 1e-3)))
 
         epochs = int(self._param("epochs", 120))
@@ -669,6 +678,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         snap_interval = int(self._param("snapshot_interval_epochs", 10) or 10)
         snap_interval = max(1, snap_interval)
 
+        # Poids de reconstruction par cellule (mis à jour dans la phase weighted).
         current_weights = np.ones(n_cells, dtype=np.float32)
         current_pseudo = np.zeros(n_cells, dtype=np.int64)
 
@@ -685,12 +695,14 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             "components": {"reconstruction": [], "triplet": [], "batch_adv": []},
         }
 
+        # 6) Boucle principale d'entraînement.
         for epoch in range(epochs):
             weighted_phase = epoch >= warmup
             if weighted_phase and (
                 epoch == warmup
                 or (update_interval > 0 and ((epoch - warmup) % update_interval == 0))
             ):
+                # Recalcule pseudo-labels + poids globaux à intervalle régulier.
                 emb_for_weights = self._encode_full(X)
                 pseudo_new = self._pseudo_labels(emb_for_weights)
                 weights_new = self._combined_cell_weights(emb_for_weights, pseudo_new)
@@ -712,6 +724,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             if batch_head is not None:
                 batch_head.train()
 
+            # 7) Entraînement mini-batch.
             for start in range(0, n_cells, batch_size):
                 idx = perm[start : start + batch_size]
                 xb_np = X[idx]
@@ -725,6 +738,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                 else:
                     x_in = xb
 
+                # Forward AE: embeddings latents + reconstruction.
                 z, recon_raw = model(x_in)
                 loss_per_sample = self._reconstruction_loss_per_sample(
                     target=tb,
@@ -733,6 +747,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                 )
 
                 if weighted_phase:
+                    # En phase weighted, chaque cellule contribue selon son poids dynamique.
                     w_t = torch.tensor(current_weights[idx], dtype=torch.float32, device=device)
                     reconstruction_loss = torch.mean(loss_per_sample * w_t)
                 else:
@@ -741,6 +756,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
 
                 triplet_loss = torch.tensor(0.0, device=device)
                 if weighted_phase and triplet_weight > 0.0 and epoch >= triplet_start:
+                    # Régularisation rare activée seulement après un certain epoch.
                     triplet_loss = self._rare_triplet_loss(
                         z=z,
                         pseudo_labels_batch=current_pseudo[idx],
@@ -751,6 +767,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                 if batch_head is not None and batch_ids_np is not None and adv_weight > 0.0:
                     start_epoch = int(self._param("adversarial_start_epoch", 10))
                     if epoch >= start_epoch:
+                        # Ramp-up progressif de la force adversariale pour stabiliser le training.
                         ramp_epochs = int(self._param("adversarial_ramp_epochs", 20) or 0)
                         if ramp_epochs > 0:
                             frac = min(1.0, (epoch - start_epoch + 1) / float(ramp_epochs))
@@ -761,6 +778,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                         yb = torch.tensor(batch_ids_np[idx], dtype=torch.long, device=device)
                         adv_loss = nn.functional.cross_entropy(logits, yb)
 
+                # Loss totale = reconstruction + triplet + batch adversarial.
                 total_loss = reconstruction_loss + triplet_weight * triplet_loss + adv_weight * adv_loss
 
                 optimizer.zero_grad(set_to_none=True)
@@ -789,6 +807,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             hist["components"]["batch_adv"].append(float(avg_adv))
 
             if capture and (epoch == 0 or epoch == epochs - 1 or (epoch % snap_interval == 0)):
+                # Snapshot périodique pour la figure d'évolution UMAP.
                 emb_snap = self._encode_full(X)
                 phase = "weighted" if weighted_phase else "warm-up"
                 self._snapshot(
@@ -799,10 +818,12 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     snapshot_type="periodic",
                 )
 
+        # 8) Fin d'entraînement: embeddings finaux + clustering final.
         self._embeddings = self._encode_full(X)
         self._labels = self._hdbscan_clustering(self._embeddings)
         self._fitted = True
 
+        # 9) Historique de loss exportable.
         history = []
         if warm_hist["epochs"]:
             history.append(warm_hist)
@@ -810,6 +831,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             history.append(weighted_hist)
         self._loss_history = history
 
+        # 10) Trace des paramètres effectivement utilisés pendant ce run.
         resolved = {
             "seed": seed,
             "random_state": seed,
@@ -827,7 +849,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def get_batch_info(self) -> tuple:
         """Réalise l'opération `get batch info` du module `scraw_algorithm`.
         
-        
         Args:
             Aucun argument explicite en dehors du contexte objet.
         
@@ -838,7 +859,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
 
     def predict(self, data: Any = None) -> Any:
         """Retourne les clusters prédits après entraînement.
-        
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
