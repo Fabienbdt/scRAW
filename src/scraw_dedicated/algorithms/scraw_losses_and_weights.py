@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 def _to_numpy(x: Any, dtype: np.dtype | None = None) -> np.ndarray:
     """Helper interne: to numpy.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
@@ -38,7 +37,6 @@ class ScrawLossWeightMixin:
     def _param(self, key: str, default: Any) -> Any:  # pragma: no cover - provided by parent class
         """Helper interne: param.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             key: Paramètre d'entrée `key` utilisé dans cette étape du pipeline.
@@ -52,7 +50,6 @@ class ScrawLossWeightMixin:
     def _prepare_reconstruction_target(self, data: Any, X_proc: np.ndarray) -> Tuple[np.ndarray, str]:
         """Prépare la matrice cible de reconstruction selon le mode NB/MSE demandé.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
@@ -95,7 +92,6 @@ class ScrawLossWeightMixin:
     def _pearson_residual_transform(self, counts: np.ndarray, theta: float) -> np.ndarray:
         """Calcule les résidus de Pearson stabilisés à partir des comptes bruts.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             counts: Paramètre d'entrée `counts` utilisé dans cette étape du pipeline.
@@ -125,7 +121,6 @@ class ScrawLossWeightMixin:
     def _cluster_frequency_weights(self, pseudo_labels: np.ndarray) -> np.ndarray:
         """Helper interne: cluster frequency weights.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             pseudo_labels: Paramètre d'entrée `pseudo_labels` utilisé dans cette étape du pipeline.
@@ -158,7 +153,6 @@ class ScrawLossWeightMixin:
     def _density_weights(self, embeddings: np.ndarray) -> np.ndarray:
         """Helper interne: density weights.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -198,7 +192,6 @@ class ScrawLossWeightMixin:
     def _combined_cell_weights(self, embeddings: np.ndarray, pseudo_labels: np.ndarray) -> np.ndarray:
         """Fusionne les poids de rareté globale et de densité locale par cellule.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -224,7 +217,6 @@ class ScrawLossWeightMixin:
     def _apply_random_mask(self, x: torch.Tensor, rate: float) -> torch.Tensor:
         """Helper interne: apply random mask.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
@@ -246,7 +238,6 @@ class ScrawLossWeightMixin:
     ) -> torch.Tensor:
         """Calcule la perte négative log-vraisemblance binomiale négative par cellule.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             target: Paramètre d'entrée `target` utilisé dans cette étape du pipeline.
@@ -278,7 +269,6 @@ class ScrawLossWeightMixin:
     ) -> torch.Tensor:
         """Calcule la loss de reconstruction par cellule (NB ou MSE).
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             target: Paramètre d'entrée `target` utilisé dans cette étape du pipeline.
@@ -304,7 +294,6 @@ class ScrawLossWeightMixin:
     ) -> torch.Tensor:
         """Calcule la régularisation triplet ciblant les cellules pondérées comme rares.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             z: Paramètre d'entrée `z` utilisé dans cette étape du pipeline.

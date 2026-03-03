@@ -18,7 +18,6 @@ import pandas as pd
 def _exp(name: str, args: List[str]) -> Tuple[str, List[str]]:
     """Helper interne: exp.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         name: Paramètre d'entrée `name` utilisé dans cette étape du pipeline.
@@ -90,7 +89,6 @@ DEEP2_EXPERIMENTS: List[Tuple[str, List[str]]] = [
 def _subprocess_env() -> Dict[str, str]:
     """Helper interne: subprocess env.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         Aucun argument explicite en dehors du contexte objet.
@@ -108,7 +106,6 @@ def _subprocess_env() -> Dict[str, str]:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Construit et retourne le parseur d'arguments CLI pour ce script.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.
@@ -132,7 +129,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def _selected_experiments(only: str) -> List[Tuple[str, List[str]]]:
     """Helper interne: selected experiments.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         only: Paramètre d'entrée `only` utilisé dans cette étape du pipeline.
@@ -156,7 +152,6 @@ def _run_one(
 ) -> int:
     """Helper interne: run one.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         name: Paramètre d'entrée `name` utilisé dans cette étape du pipeline.
@@ -188,7 +183,6 @@ def _run_one(
 def _collect_summary(output_root: Path, experiments: List[Tuple[str, List[str]]]) -> Path:
     """Helper interne: collect summary.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         output_root: Paramètre d'entrée `output_root` utilisé dans cette étape du pipeline.
@@ -257,7 +251,6 @@ def _collect_summary(output_root: Path, experiments: List[Tuple[str, List[str]]]
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Point d'entrée principal appelé lors de l'exécution du script.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.

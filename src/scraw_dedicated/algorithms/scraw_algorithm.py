@@ -32,7 +32,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def get_info(cls) -> AlgorithmInfo:
         """Réalise l'opération `get info` du module `scraw_algorithm`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             Aucun argument explicite en dehors du contexte objet.
@@ -62,7 +61,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def get_hyperparameters(cls) -> List[HyperparameterConfig]:
         """Réalise l'opération `get hyperparameters` du module `scraw_algorithm`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             Aucun argument explicite en dehors du contexte objet.
@@ -503,7 +501,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def __init__(self, params: Optional[Dict[str, Any]] = None):
         """Helper interne: init.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             params: Paramètre d'entrée `params` utilisé dans cette étape du pipeline.
@@ -519,7 +516,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def _param(self, key: str, default: Any) -> Any:
         """Helper interne: param.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             key: Paramètre d'entrée `key` utilisé dans cette étape du pipeline.
@@ -533,7 +529,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def _infer_batch_ids(self, data: Any, n_cells: int) -> Tuple[Optional[np.ndarray], int, Optional[str]]:
         """Helper interne: infer batch ids.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
@@ -572,7 +567,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     ) -> None:
         """Helper interne: snapshot.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             epoch: Paramètre d'entrée `epoch` utilisé dans cette étape du pipeline.
@@ -597,7 +591,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def _encode_full(self, X: np.ndarray) -> np.ndarray:
         """Helper interne: encode full.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             X: Paramètre d'entrée `X` utilisé dans cette étape du pipeline.
@@ -610,7 +603,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def fit(self, data: Any, labels: Optional[Any] = None) -> "ScRAWAlgorithm":
         """Entraîne le modèle sur les données fournies.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
@@ -835,7 +827,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def get_batch_info(self) -> tuple:
         """Réalise l'opération `get batch info` du module `scraw_algorithm`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             Aucun argument explicite en dehors du contexte objet.
@@ -848,7 +839,6 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
     def predict(self, data: Any = None) -> Any:
         """Retourne les clusters prédits après entraînement.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.

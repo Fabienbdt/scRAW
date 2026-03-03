@@ -26,7 +26,6 @@ logger = logging.getLogger("scraw_dedicated")
 def _setup_logging(verbose: bool) -> None:
     """Configure le niveau et le format des logs pour le terminal.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         verbose: Paramètre d'entrée `verbose` utilisé dans cette étape du pipeline.
@@ -60,7 +59,6 @@ def _configure_runtime_cache(output_dir: Path) -> None:
 def _detect_label_key(obs_columns: Sequence[str]) -> Optional[str]:
     """Détecte automatiquement la colonne de labels biologiques dans `adata.obs`.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         obs_columns: Paramètre d'entrée `obs_columns` utilisé dans cette étape du pipeline.
@@ -86,7 +84,6 @@ def _detect_label_key(obs_columns: Sequence[str]) -> Optional[str]:
 def _detect_batch_key(obs_columns: Sequence[str], preferred: Optional[str] = None) -> Optional[str]:
     """Détecte automatiquement la colonne batch dans `adata.obs`.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         obs_columns: Paramètre d'entrée `obs_columns` utilisé dans cette étape du pipeline.
@@ -106,7 +103,6 @@ def _detect_batch_key(obs_columns: Sequence[str], preferred: Optional[str] = Non
 def _detect_batch_key_in_file(data_path: Path, preferred: Optional[str]) -> Optional[str]:
     """Lit un fichier h5ad en mode léger pour détecter la colonne batch sans tout charger.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         data_path: Paramètre d'entrée `data_path` utilisé dans cette étape du pipeline.
@@ -129,7 +125,6 @@ def _detect_batch_key_in_file(data_path: Path, preferred: Optional[str]) -> Opti
 def _as_jsonable(value: Any) -> Any:
     """Helper interne: as jsonable.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         value: Paramètre d'entrée `value` utilisé dans cette étape du pipeline.
@@ -153,7 +148,6 @@ def _as_jsonable(value: Any) -> Any:
 def _save_json(path: Path, payload: Dict[str, Any]) -> None:
     """Helper interne: save json.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         path: Paramètre d'entrée `path` utilisé dans cette étape du pipeline.
@@ -168,7 +162,6 @@ def _save_json(path: Path, payload: Dict[str, Any]) -> None:
 def _save_csv(path: Path, row: Dict[str, Any]) -> None:
     """Helper interne: save csv.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         path: Paramètre d'entrée `path` utilisé dans cette étape du pipeline.
@@ -186,7 +179,6 @@ def _save_csv(path: Path, row: Dict[str, Any]) -> None:
 def _safe_numpy(x: Any) -> np.ndarray:
     """Helper interne: safe numpy.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
@@ -200,7 +192,6 @@ def _safe_numpy(x: Any) -> np.ndarray:
 def _parse_scalar(raw: str) -> Any:
     """Convertit une valeur texte CLI en booléen, entier, flottant, None ou chaîne.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         raw: Paramètre d'entrée `raw` utilisé dans cette étape du pipeline.
@@ -237,7 +228,6 @@ def _parse_scalar(raw: str) -> Any:
 def _parse_kv_overrides(items: Sequence[str]) -> Dict[str, Any]:
     """Convertit une liste `KEY=VALUE` en dictionnaire Python prêt à l'emploi.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         items: Paramètre d'entrée `items` utilisé dans cette étape du pipeline.
@@ -269,7 +259,6 @@ def _build_scraw_params(
 ) -> Dict[str, Any]:
     """Construit la configuration finale scRAW à partir du preset et des overrides utilisateur.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         preset_name: Paramètre d'entrée `preset_name` utilisé dans cette étape du pipeline.
@@ -317,7 +306,6 @@ def _build_scraw_params(
 def _label_encoding(labels: Sequence[Any]) -> Tuple[np.ndarray, Dict[str, str]]:
     """Helper interne: label encoding.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
@@ -336,7 +324,6 @@ def _label_encoding(labels: Sequence[Any]) -> Tuple[np.ndarray, Dict[str, str]]:
 def _extract_final_cell_weights(snapshots: List[Dict[str, Any]], n_cells: int) -> Optional[np.ndarray]:
     """Helper interne: extract final cell weights.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         snapshots: Paramètre d'entrée `snapshots` utilisé dans cette étape du pipeline.
@@ -358,7 +345,6 @@ def _extract_final_cell_weights(snapshots: List[Dict[str, Any]], n_cells: int) -
 def _hyperparams_declared() -> List[Dict[str, Any]]:
     """Expose la liste des hyperparamètres déclarés par l'algorithme scRAW.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         Aucun argument explicite en dehors du contexte objet.
@@ -390,7 +376,6 @@ def _hyperparams_declared() -> List[Dict[str, Any]]:
 def run_once(args: argparse.Namespace) -> int:
     """Exécute un run scRAW complet: préparation, entraînement, métriques et exports.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         args: Paramètre d'entrée `args` utilisé dans cette étape du pipeline.
@@ -721,7 +706,6 @@ def run_once(args: argparse.Namespace) -> int:
 def build_arg_parser() -> argparse.ArgumentParser:
     """Déclare toutes les options de ligne de commande supportées par le runner.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         Aucun argument explicite en dehors du contexte objet.
@@ -760,7 +744,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Point d'entrée principal appelé lors de l'exécution du script.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.

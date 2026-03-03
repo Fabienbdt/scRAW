@@ -63,7 +63,6 @@ _COMMON_ALGO: Dict[str, Any] = {
 def _merge(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
     """Fusionne deux dictionnaires de configuration sans modifier l'original.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         base: Paramètre d'entrée `base` utilisé dans cette étape du pipeline.
@@ -148,7 +147,6 @@ PRESETS: Dict[str, ScrawPreset] = {
 def get_preset(name: str) -> ScrawPreset:
     """Retourne un preset valide à partir de son nom et lève une erreur sinon.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         name: Paramètre d'entrée `name` utilisé dans cette étape du pipeline.

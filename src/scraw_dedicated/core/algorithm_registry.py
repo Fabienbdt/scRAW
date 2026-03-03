@@ -354,7 +354,6 @@ class BaseAlgorithm(ABC):
         def get_auto_device():
             """Réalise l'opération `get auto device` du module `algorithm_registry`.
             
-            Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
             
             Args:
                 Aucun argument explicite en dehors du contexte objet.
@@ -442,7 +441,6 @@ class AlgorithmRegistry:
     def __new__(cls):
         """Helper interne: new.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             Aucun argument explicite en dehors du contexte objet.

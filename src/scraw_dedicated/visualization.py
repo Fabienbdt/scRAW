@@ -12,7 +12,6 @@ import numpy as np
 def _to_2d(embeddings: np.ndarray, random_state: int = 42) -> np.ndarray:
     """Helper interne: to 2d.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -44,7 +43,6 @@ def _to_2d(embeddings: np.ndarray, random_state: int = 42) -> np.ndarray:
 def _map_categories(labels: Sequence[Any]) -> Tuple[np.ndarray, Dict[str, int]]:
     """Helper interne: map categories.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
@@ -62,7 +60,6 @@ def _map_categories(labels: Sequence[Any]) -> Tuple[np.ndarray, Dict[str, int]]:
 def _scatter_cat(ax: Any, coords: np.ndarray, labels: Sequence[Any], title: str, point_size: float = 4.0) -> None:
     """Helper interne: scatter cat.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         ax: Paramètre d'entrée `ax` utilisé dans cette étape du pipeline.
@@ -90,7 +87,6 @@ def plot_umap_comparison(
 ) -> plt.Figure:
     """Trace un UMAP final comparant Ground Truth et prédictions.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -117,7 +113,6 @@ def plot_umap_batch(
 ) -> plt.Figure:
     """Trace un UMAP final coloré par batch d'origine.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -137,7 +132,6 @@ def plot_umap_batch(
 def _nonlinear_alpha(weights: np.ndarray, power: float = 4.0) -> np.ndarray:
     """Helper interne: nonlinear alpha.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         weights: Paramètre d'entrée `weights` utilisé dans cette étape du pipeline.
@@ -165,7 +159,6 @@ def plot_umap_weighted(
 ) -> plt.Figure:
     """Trace un UMAP où l'opacité varie selon le poids de reconstruction.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -201,7 +194,6 @@ def plot_umap_weighted_gradient(
 ) -> plt.Figure:
     """Trace un UMAP avec dégradé de couleur selon le poids de reconstruction.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -230,7 +222,6 @@ def plot_umap_weighted_gradient(
 def _select_periodic_snapshots_every_10(snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Helper interne: select periodic snapshots every 10.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         snapshots: Paramètre d'entrée `snapshots` utilisé dans cette étape du pipeline.
@@ -277,7 +268,6 @@ def plot_umap_evolution(
 ) -> Optional[plt.Figure]:
     """Trace l'évolution de l'espace latent à plusieurs epochs.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         snapshots: Paramètre d'entrée `snapshots` utilisé dans cette étape du pipeline.
@@ -347,7 +337,6 @@ def plot_umap_evolution(
 def plot_loss_curves(loss_history: List[Dict[str, Any]], title: str) -> Optional[plt.Figure]:
     """Trace les courbes de loss par phase d'entraînement.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         loss_history: Paramètre d'entrée `loss_history` utilisé dans cette étape du pipeline.
@@ -381,7 +370,6 @@ def plot_loss_curves(loss_history: List[Dict[str, Any]], title: str) -> Optional
 def plot_marker_overlap_heatmap(true_labels: Sequence[Any], pred_labels: Sequence[Any], title: str) -> plt.Figure:
     """Trace la heatmap de recouvrement labels réels vs clusters prédits.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         true_labels: Paramètre d'entrée `true_labels` utilisé dans cette étape du pipeline.

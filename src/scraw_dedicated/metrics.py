@@ -14,7 +14,6 @@ NOISE_LABELS = {-1, "-1", "noise", "Noise", "NOISE", "unassigned", "Unassigned"}
 def _to_array(values: Any) -> np.ndarray:
     """Helper interne: to array.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         values: Paramètre d'entrée `values` utilisé dans cette étape du pipeline.
@@ -30,7 +29,6 @@ def _filter_noise(
 ) -> Tuple[Optional[np.ndarray], np.ndarray, Optional[np.ndarray]]:
     """Helper interne: filter noise.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
@@ -63,7 +61,6 @@ def _filter_noise(
 def align_labels(labels_true: np.ndarray, labels_pred: np.ndarray) -> np.ndarray:
     """Réalise l'opération `align labels` du module `metrics`.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
@@ -96,7 +93,6 @@ def align_labels(labels_true: np.ndarray, labels_pred: np.ndarray) -> np.ndarray
 def _accuracy(labels_true: np.ndarray, labels_pred: np.ndarray) -> float:
     """Helper interne: accuracy.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
@@ -114,7 +110,6 @@ def _accuracy(labels_true: np.ndarray, labels_pred: np.ndarray) -> float:
 def _balanced_metrics(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[str, float]:
     """Helper interne: balanced metrics.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
@@ -135,7 +130,6 @@ def _balanced_metrics(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[
 def _rare_acc(labels_true: np.ndarray, labels_pred: np.ndarray, threshold: float = 0.05) -> Optional[float]:
     """Helper interne: rare acc.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
@@ -161,7 +155,6 @@ def _rare_acc(labels_true: np.ndarray, labels_pred: np.ndarray, threshold: float
 def _classwise(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[str, Dict[str, float]]:
     """Helper interne: classwise.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
@@ -193,7 +186,6 @@ def _classwise(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[str, Di
 def _silhouette(embeddings: np.ndarray, labels_pred: np.ndarray, sample_size: Optional[int] = 5000) -> float:
     """Helper interne: silhouette.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -224,7 +216,6 @@ def _silhouette(embeddings: np.ndarray, labels_pred: np.ndarray, sample_size: Op
 def _knn_purity(latent: np.ndarray, labels: np.ndarray, n_neighbors: int = 30) -> float:
     """Helper interne: knn purity.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         latent: Paramètre d'entrée `latent` utilisé dans cette étape du pipeline.

@@ -19,9 +19,7 @@ class _GradientReversalFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx: Any, x: torch.Tensor, lambda_: torch.Tensor) -> torch.Tensor:
         """Réalise l'opération `forward` du module `base_autoencoder`.
-        
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
-        
+                
         Args:
             ctx: Paramètre d'entrée `ctx` utilisé dans cette étape du pipeline.
             x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
@@ -37,7 +35,6 @@ class _GradientReversalFunction(torch.autograd.Function):
     def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
         """Réalise l'opération `backward` du module `base_autoencoder`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             ctx: Paramètre d'entrée `ctx` utilisé dans cette étape du pipeline.
@@ -51,9 +48,7 @@ class _GradientReversalFunction(torch.autograd.Function):
 
 def gradient_reversal(x: torch.Tensor, lambda_: float = 1.0) -> torch.Tensor:
     """Réalise l'opération `gradient reversal` du module `base_autoencoder`.
-    
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
-    
+        
     Args:
         x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
         lambda_: Paramètre d'entrée `lambda_` utilisé dans cette étape du pipeline.
@@ -78,7 +73,6 @@ class MLPAutoencoder(nn.Module):
     def __init__(self, shape: NetworkShape, dropout: float = 0.1) -> None:
         """Helper interne: init.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             shape: Paramètre d'entrée `shape` utilisé dans cette étape du pipeline.
@@ -108,8 +102,6 @@ class MLPAutoencoder(nn.Module):
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Réalise l'opération `forward` du module `base_autoencoder`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
-        
         Args:
             x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
         
@@ -123,9 +115,7 @@ class MLPAutoencoder(nn.Module):
 
 def parse_hidden_layers(raw: Any) -> List[int]:
     """Réalise l'opération `parse hidden layers` du module `base_autoencoder`.
-    
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
-    
+        
     Args:
         raw: Paramètre d'entrée `raw` utilisé dans cette étape du pipeline.
     
@@ -162,7 +152,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def get_info(cls) -> AlgorithmInfo:
         """Réalise l'opération `get info` du module `base_autoencoder`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             Aucun argument explicite en dehors du contexte objet.
@@ -186,7 +175,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def get_hyperparameters(cls) -> List[HyperparameterConfig]:
         """Réalise l'opération `get hyperparameters` du module `base_autoencoder`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             Aucun argument explicite en dehors du contexte objet.
@@ -268,7 +256,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def __init__(self, params: Optional[Dict[str, Any]] = None) -> None:
         """Helper interne: init.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             params: Paramètre d'entrée `params` utilisé dans cette étape du pipeline.
@@ -281,8 +268,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
 
     def _as_numpy_matrix(self, data: Any) -> np.ndarray:
         """Helper interne: as numpy matrix.
-        
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
@@ -300,8 +285,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
 
     def _build_model(self, input_dim: int) -> MLPAutoencoder:
         """Helper interne: build model.
-        
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             input_dim: Paramètre d'entrée `input_dim` utilisé dans cette étape du pipeline.
@@ -321,7 +304,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def _encode_numpy(self, X: np.ndarray, batch_size: int = 2048) -> np.ndarray:
         """Helper interne: encode numpy.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             X: Paramètre d'entrée `X` utilisé dans cette étape du pipeline.
@@ -349,7 +331,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def fit(self, data: Any, labels: Optional[Any] = None) -> "BaseAutoencoderAlgorithm":
         """Entraîne le modèle sur les données fournies.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
@@ -363,7 +344,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def predict(self, data: Any = None) -> Any:
         """Retourne les clusters prédits après entraînement.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
@@ -378,7 +358,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def encode(self, data: Any) -> np.ndarray:
         """Projette les données dans l'espace latent appris par l'encodeur.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
@@ -392,7 +371,6 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
     def get_num_parameters(self) -> Optional[int]:
         """Réalise l'opération `get num parameters` du module `base_autoencoder`.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             Aucun argument explicite en dehors du contexte objet.

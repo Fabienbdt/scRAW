@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 def remap_contiguous_labels(labels: np.ndarray) -> np.ndarray:
     """Réalise l'opération `remap contiguous labels` du module `scraw_clustering`.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
@@ -37,7 +36,6 @@ class ScrawClusteringMixin:
     def _param(self, key: str, default: Any) -> Any:  # pragma: no cover - provided by parent class
         """Helper interne: param.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             key: Paramètre d'entrée `key` utilisé dans cette étape du pipeline.
@@ -51,7 +49,6 @@ class ScrawClusteringMixin:
     def _estimate_k(self, n_cells: int) -> int:
         """Helper interne: estimate k.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             n_cells: Paramètre d'entrée `n_cells` utilisé dans cette étape du pipeline.
@@ -69,7 +66,6 @@ class ScrawClusteringMixin:
     def _kmeans_pseudo_labels(self, embeddings: np.ndarray) -> np.ndarray:
         """Calcule des pseudo-labels KMeans lorsque Leiden n'est pas disponible.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -88,7 +84,6 @@ class ScrawClusteringMixin:
     def _leiden_pseudo_labels(self, embeddings: np.ndarray) -> np.ndarray:
         """Calcule des pseudo-labels Leiden sur les embeddings latents.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -122,7 +117,6 @@ class ScrawClusteringMixin:
     def _pseudo_labels(self, embeddings: np.ndarray) -> np.ndarray:
         """Calcule les pseudo-labels utilisés pendant l'entraînement pondéré.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -152,7 +146,6 @@ class ScrawClusteringMixin:
     def _hdbscan_clustering(self, embeddings: np.ndarray) -> np.ndarray:
         """Applique HDBSCAN sur l'espace latent final pour obtenir les clusters prédits.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
@@ -190,7 +183,6 @@ class ScrawClusteringMixin:
     def _reassign_noise_to_centroids(self, embeddings: np.ndarray, labels: np.ndarray) -> np.ndarray:
         """Helper interne: reassign noise to centroids.
         
-        Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
         
         Args:
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.

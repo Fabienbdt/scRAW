@@ -19,7 +19,6 @@ import numpy as np
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Construit et retourne le parseur d'arguments CLI pour ce script.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.
@@ -48,7 +47,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def _metric_value(row: Dict[str, str], key: str) -> float:
     """Helper interne: metric value.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         row: Paramètre d'entrée `row` utilisé dans cette étape du pipeline.
@@ -66,7 +64,6 @@ def _metric_value(row: Dict[str, str], key: str) -> float:
 def _read_metrics(path: Path) -> Dict[str, float]:
     """Helper interne: read metrics.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         path: Paramètre d'entrée `path` utilisé dans cette étape du pipeline.
@@ -118,7 +115,6 @@ def _read_metrics(path: Path) -> Dict[str, float]:
 def _build_run_cmd(args: argparse.Namespace, seed: int, run_output: Path) -> List[str]:
     """Helper interne: build run cmd.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         args: Paramètre d'entrée `args` utilisé dans cette étape du pipeline.
@@ -165,7 +161,6 @@ def _build_run_cmd(args: argparse.Namespace, seed: int, run_output: Path) -> Lis
 def _subprocess_env() -> Dict[str, str]:
     """Helper interne: subprocess env.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         Aucun argument explicite en dehors du contexte objet.
@@ -183,7 +178,6 @@ def _subprocess_env() -> Dict[str, str]:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Point d'entrée principal appelé lors de l'exécution du script.
     
-    Cette docstring est rédigée pour faciliter la lecture du code, même pour un débutant.
     
     Args:
         argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.
