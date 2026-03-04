@@ -26,3 +26,4 @@ igraph==0.11.8
 leidenalg==0.10.2
 
 torch==2.5.1
+optuna==3.6.1
