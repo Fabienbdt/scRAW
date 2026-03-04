@@ -14,7 +14,6 @@ REFINE_TOP_K="${REFINE_TOP_K:-24}"
 MAX_RUNS_SELECTION="${MAX_RUNS_SELECTION:-random}"
 SEARCH_GROUPS="${SEARCH_GROUPS:-baseline,single,pairwise,batch,dann}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
-RUN_LOSS_ABLATION="${RUN_LOSS_ABLATION:-0}"
 DANN_CONTROLS="${DANN_CONTROLS:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 TIMEOUT="${TIMEOUT:-}"
@@ -74,12 +73,6 @@ else
   CMD+=("--no-skip-existing")
 fi
 
-if [[ "${RUN_LOSS_ABLATION}" == "1" ]]; then
-  CMD+=("--run-loss-ablation")
-else
-  CMD+=("--no-loss-ablation")
-fi
-
 if [[ "${DANN_CONTROLS}" == "1" ]]; then
   CMD+=("--dann-controls")
 else
@@ -93,6 +86,9 @@ fi
 if [[ "$#" -gt 0 ]]; then
   CMD+=("$@")
 fi
+
+# Ultra search is metrics-only by design: never run figure-generating ablation.
+CMD+=("--no-loss-ablation")
 
 {
   echo "Launch time: $(date)"
