@@ -10,8 +10,28 @@ DEVICE="${DEVICE:-cuda}"
 SEED="${SEED:-42}"
 N_TRIALS="${N_TRIALS:-300}"
 N_SEEDS="${N_SEEDS:-1}"
+SEARCH_GROUPS="${SEARCH_GROUPS:-baseline,single,pairwise,batch,dann}"
+SKIP_EXISTING="${SKIP_EXISTING:-1}"
+RUN_LOSS_ABLATION="${RUN_LOSS_ABLATION:-0}"
+DANN_CONTROLS="${DANN_CONTROLS:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 TIMEOUT="${TIMEOUT:-}"
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+  else
+    echo "Error: no Python interpreter found (PYTHON_BIN='${PYTHON_BIN}')." >&2
+    exit 1
+  fi
+fi
+
+if [[ ! -f "${DATA_PATH}" ]]; then
+  echo "Error: DATA_PATH not found: ${DATA_PATH}" >&2
+  exit 1
+fi
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 DATA_STEM="$(basename "${DATA_PATH}")"
@@ -33,12 +53,29 @@ CMD=(
   "--output-root" "${OUTPUT_ROOT}"
   "--device" "${DEVICE}"
   "--seed" "${SEED}"
-  "--n-trials" "${N_TRIALS}"
-  "--n-seeds" "${N_SEEDS}"
+  "--groups" "${SEARCH_GROUPS}"
 )
 
-if [[ -n "${TIMEOUT}" ]]; then
-  CMD+=("--timeout" "${TIMEOUT}")
+if [[ "${N_TRIALS}" != "0" ]]; then
+  CMD+=("--max-runs" "${N_TRIALS}")
+fi
+
+if [[ "${SKIP_EXISTING}" == "1" ]]; then
+  CMD+=("--skip-existing")
+else
+  CMD+=("--no-skip-existing")
+fi
+
+if [[ "${RUN_LOSS_ABLATION}" == "1" ]]; then
+  CMD+=("--run-loss-ablation")
+else
+  CMD+=("--no-loss-ablation")
+fi
+
+if [[ "${DANN_CONTROLS}" == "1" ]]; then
+  CMD+=("--dann-controls")
+else
+  CMD+=("--no-dann-controls")
 fi
 
 if [[ "${DRY_RUN}" == "1" ]]; then
@@ -54,13 +91,29 @@ fi
   echo "Output root: ${OUTPUT_ROOT}"
   echo "N trials: ${N_TRIALS}"
   echo "N seeds: ${N_SEEDS}"
+  echo "Search groups: ${SEARCH_GROUPS}"
   echo "Device: ${DEVICE}"
+  if [[ "${N_SEEDS}" != "1" ]]; then
+    echo "Note: current runner supports one seed per run; N_SEEDS is informational only."
+  fi
+  if [[ -n "${TIMEOUT}" ]]; then
+    echo "Timeout requested: ${TIMEOUT}"
+  fi
   echo "Command:"
   printf ' %q' "${CMD[@]}"
   echo
 } > "${OUTPUT_ROOT}/launch_info.txt"
 
-nohup "${CMD[@]}" > "${LOG_FILE}" 2>&1 &
+NOHUP_CMD=("${CMD[@]}")
+if [[ -n "${TIMEOUT}" ]]; then
+  if command -v timeout >/dev/null 2>&1; then
+    NOHUP_CMD=("timeout" "${TIMEOUT}" "${NOHUP_CMD[@]}")
+  else
+    echo "Warning: 'timeout' command not found; TIMEOUT ignored." >> "${OUTPUT_ROOT}/launch_info.txt"
+  fi
+fi
+
+nohup "${NOHUP_CMD[@]}" > "${LOG_FILE}" 2>&1 &
 PID=$!
 
 echo "Ultra hyperparameter search started in background."
