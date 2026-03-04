@@ -7,6 +7,7 @@ This file keeps the training orchestration readable by delegating:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import logging
 
@@ -514,6 +515,56 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     advanced=True,
                 ),
                 HyperparameterConfig(
+                    name="resume_checkpoint_path",
+                    display_name="Resume Checkpoint",
+                    param_type=ParamType.STRING,
+                    default="",
+                    description=(
+                        "Optional training checkpoint path used to resume optimization "
+                        "from a shared latent state."
+                    ),
+                    category="Monitoring",
+                    advanced=True,
+                ),
+                HyperparameterConfig(
+                    name="save_checkpoint_path",
+                    display_name="Save Checkpoint",
+                    param_type=ParamType.STRING,
+                    default="",
+                    description=(
+                        "Optional output path where a training checkpoint is dumped "
+                        "when `stop_after_epoch` is reached."
+                    ),
+                    category="Monitoring",
+                    advanced=True,
+                ),
+                HyperparameterConfig(
+                    name="stop_after_epoch",
+                    display_name="Stop After Epoch",
+                    param_type=ParamType.INTEGER,
+                    default=-1,
+                    min_value=-1,
+                    max_value=2000,
+                    description=(
+                        "Early-stop training after this epoch index (inclusive); "
+                        "-1 disables early stop."
+                    ),
+                    category="Monitoring",
+                    advanced=True,
+                ),
+                HyperparameterConfig(
+                    name="resume_load_optimizer",
+                    display_name="Resume Optimizer",
+                    param_type=ParamType.BOOLEAN,
+                    default=True,
+                    description=(
+                        "When resuming from checkpoint, also restore optimizer/scheduler "
+                        "states when compatible."
+                    ),
+                    category="Monitoring",
+                    advanced=True,
+                ),
+                HyperparameterConfig(
                     name="seed",
                     display_name="Seed",
                     param_type=ParamType.INTEGER,
@@ -766,6 +817,52 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             Valeur calculée par la fonction.
         """
         return self.params.get(key, default)
+
+    def _path_param(self, key: str) -> Optional[Path]:
+        """Parse one path-like hyperparameter into a normalized Path."""
+        raw = self._param(key, "")
+        text = "" if raw is None else str(raw).strip()
+        if not text:
+            return None
+        return Path(text).expanduser().resolve()
+
+    def _save_training_checkpoint(
+        self,
+        path: Path,
+        *,
+        next_epoch: int,
+        model: nn.Module,
+        batch_head: Optional[nn.Module],
+        optimizer: torch.optim.Optimizer,
+        scheduler: Any,
+        current_weights: np.ndarray,
+        current_cluster_component: np.ndarray,
+        current_density_component: np.ndarray,
+        current_fused_unclipped: np.ndarray,
+        current_pseudo: np.ndarray,
+        warm_hist: Dict[str, Any],
+        weighted_hist: Dict[str, Any],
+    ) -> None:
+        """Save a full training checkpoint for resume-at-epoch workflows."""
+        payload = {
+            "version": 1,
+            "next_epoch": int(next_epoch),
+            "model_state": model.state_dict(),
+            "batch_head_state": None if batch_head is None else batch_head.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
+            "current_weights": np.asarray(current_weights, dtype=np.float32),
+            "current_cluster_component": np.asarray(current_cluster_component, dtype=np.float32),
+            "current_density_component": np.asarray(current_density_component, dtype=np.float32),
+            "current_fused_unclipped": np.asarray(current_fused_unclipped, dtype=np.float32),
+            "current_pseudo": np.asarray(current_pseudo, dtype=np.int64),
+            "warm_hist": warm_hist,
+            "weighted_hist": weighted_hist,
+            "embedding_snapshots": self._embedding_snapshots,
+            "params": dict(self.params),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(payload, str(path))
 
     def _infer_batch_ids(self, data: Any, n_cells: int) -> Tuple[Optional[np.ndarray], int, Optional[str]]:
         """Resolve batch ids from adata.obs for reporting and optional DANN."""
@@ -1049,6 +1146,12 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             "components": {"reconstruction": [], "triplet": [], "batch_adv": []},
         }
 
+        resume_checkpoint_path = self._path_param("resume_checkpoint_path")
+        save_checkpoint_path = self._path_param("save_checkpoint_path")
+        stop_after_epoch = int(self._param("stop_after_epoch", -1) or -1)
+        load_optimizer_state = bool(self._param("resume_load_optimizer", True))
+        start_epoch = 0
+
         # DataLoader aligné avec SCRBenchmark pour reproduire l'ordre mini-batch PyTorch.
         from torch.utils.data import DataLoader, TensorDataset
 
@@ -1064,7 +1167,109 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             dataset = TensorDataset(X_tensor_cpu, target_tensor_cpu, index_tensor_cpu)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-        if capture and epochs > 0:
+        if resume_checkpoint_path is not None:
+            if not resume_checkpoint_path.exists():
+                raise FileNotFoundError(
+                    f"Resume checkpoint not found: {resume_checkpoint_path}"
+                )
+            logger.info("Resuming from checkpoint: %s", resume_checkpoint_path)
+            try:
+                try:
+                    checkpoint = torch.load(
+                        str(resume_checkpoint_path),
+                        map_location="cpu",
+                        weights_only=False,
+                    )
+                except TypeError:
+                    checkpoint = torch.load(str(resume_checkpoint_path), map_location="cpu")
+            except Exception as exc:
+                raise RuntimeError(f"Failed to load checkpoint {resume_checkpoint_path}: {exc}") from exc
+
+            if not isinstance(checkpoint, dict) or checkpoint.get("model_state") is None:
+                raise RuntimeError(
+                    f"Invalid checkpoint format: {resume_checkpoint_path}"
+                )
+
+            model.load_state_dict(checkpoint["model_state"], strict=True)
+
+            ckpt_head_state = checkpoint.get("batch_head_state")
+            if batch_head is not None and ckpt_head_state is not None:
+                try:
+                    batch_head.load_state_dict(ckpt_head_state, strict=True)
+                except Exception as exc:
+                    logger.warning("Batch head state restore failed: %s", exc)
+            elif batch_head is not None and ckpt_head_state is None:
+                logger.info("No batch head state in checkpoint; DANN head starts from fresh init.")
+
+            optimizer_loaded = False
+            if load_optimizer_state and checkpoint.get("optimizer_state") is not None:
+                try:
+                    optimizer.load_state_dict(checkpoint["optimizer_state"])
+                    optimizer_loaded = True
+                except Exception as exc:
+                    logger.warning("Optimizer state restore failed (continuing): %s", exc)
+
+            scheduler_loaded = False
+            if load_optimizer_state and checkpoint.get("scheduler_state") is not None:
+                try:
+                    scheduler.load_state_dict(checkpoint["scheduler_state"])
+                    scheduler_loaded = True
+                except Exception as exc:
+                    logger.warning("Scheduler state restore failed (continuing): %s", exc)
+
+            def _restore_vec(key: str, default: np.ndarray, dtype: Any) -> np.ndarray:
+                raw = checkpoint.get(key)
+                if raw is None:
+                    return default
+                arr = np.asarray(raw, dtype=dtype).reshape(-1)
+                if arr.shape[0] != n_cells:
+                    return default
+                return arr
+
+            current_weights = _restore_vec("current_weights", current_weights, np.float32)
+            current_cluster_component = _restore_vec(
+                "current_cluster_component", current_cluster_component, np.float32
+            )
+            current_density_component = _restore_vec(
+                "current_density_component", current_density_component, np.float32
+            )
+            current_fused_unclipped = _restore_vec(
+                "current_fused_unclipped", current_fused_unclipped, np.float32
+            )
+            current_pseudo = _restore_vec("current_pseudo", current_pseudo, np.int64)
+
+            warm_hist_ckpt = checkpoint.get("warm_hist")
+            weighted_hist_ckpt = checkpoint.get("weighted_hist")
+            if isinstance(warm_hist_ckpt, dict):
+                warm_hist = warm_hist_ckpt
+            if isinstance(weighted_hist_ckpt, dict):
+                weighted_hist = weighted_hist_ckpt
+
+            snapshots_ckpt = checkpoint.get("embedding_snapshots")
+            if isinstance(snapshots_ckpt, list):
+                self._embedding_snapshots = snapshots_ckpt
+
+            start_epoch = int(checkpoint.get("next_epoch", 0) or 0)
+            start_epoch = int(np.clip(start_epoch, 0, max(0, epochs)))
+
+            if start_epoch > 0 and not scheduler_loaded:
+                # Restore LR position on cosine schedule even without optimizer/scheduler state.
+                scheduler.last_epoch = int(start_epoch - 1)
+                try:
+                    lrs = scheduler._get_closed_form_lr()
+                    for pg, lr_val in zip(optimizer.param_groups, lrs):
+                        pg["lr"] = float(lr_val)
+                    scheduler._last_lr = [float(x) for x in lrs]
+                except Exception:
+                    pass
+
+            if start_epoch > 0 and not optimizer_loaded:
+                logger.info(
+                    "Checkpoint resumed at epoch %d with fresh optimizer state.",
+                    start_epoch,
+                )
+
+        if capture and epochs > 0 and start_epoch == 0 and not self._embedding_snapshots:
             # Snapshot epoch 0 avant toute backward pass (latent primordial).
             emb_init = self._encode_full(X)
             pseudo_init = self._pseudo_labels(emb_init)
@@ -1096,7 +1301,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             )
 
         # 6) Boucle principale d'entraînement.
-        for epoch in range(epochs):
+        for epoch in range(start_epoch, epochs):
             weighted_phase = epoch >= warmup
             if weighted_phase and (
                 epoch == warmup
@@ -1216,12 +1421,12 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
 
                 adv_loss = torch.tensor(0.0, device=device)
                 if batch_head is not None and batch_ids_np is not None and adv_weight > 0.0:
-                    start_epoch = int(self._param("adversarial_start_epoch", 0))
-                    if epoch >= start_epoch:
+                    adv_start_epoch = int(self._param("adversarial_start_epoch", 0))
+                    if epoch >= adv_start_epoch:
                         # Ramp-up progressif de la force adversariale pour stabiliser le training.
                         ramp_epochs = int(self._param("adversarial_ramp_epochs", 0) or 0)
                         if ramp_epochs > 0:
-                            frac = min(1.0, (epoch - start_epoch + 1) / float(ramp_epochs))
+                            frac = min(1.0, (epoch - adv_start_epoch + 1) / float(ramp_epochs))
                         else:
                             frac = 1.0
                         lam = float(self._param("adversarial_lambda", 1.0)) * frac
@@ -1283,6 +1488,31 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     snapshot_type="periodic",
                 )
 
+            if stop_after_epoch >= 0 and epoch >= stop_after_epoch:
+                if save_checkpoint_path is not None:
+                    self._save_training_checkpoint(
+                        save_checkpoint_path,
+                        next_epoch=epoch + 1,
+                        model=model,
+                        batch_head=batch_head,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        current_weights=current_weights,
+                        current_cluster_component=current_cluster_component,
+                        current_density_component=current_density_component,
+                        current_fused_unclipped=current_fused_unclipped,
+                        current_pseudo=current_pseudo,
+                        warm_hist=warm_hist,
+                        weighted_hist=weighted_hist,
+                    )
+                    logger.info(
+                        "Saved training checkpoint at epoch %d -> %s",
+                        epoch,
+                        save_checkpoint_path,
+                    )
+                logger.info("Early stop requested at epoch %d", epoch)
+                break
+
         # 8) Fin d'entraînement: embeddings finaux + clustering final.
         self._embeddings = self._encode_full(X)
         self._labels = self._hdbscan_clustering(self._embeddings)
@@ -1312,6 +1542,11 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             "n_batches_effective": int(n_batches),
             "mmd_batch_weight_effective": float(self._param("mmd_batch_weight", 0.0) or 0.0),
             "n_clusters_effective": n_clusters_effective,
+            "resume_checkpoint_path_effective": None
+            if resume_checkpoint_path is None
+            else str(resume_checkpoint_path),
+            "start_epoch_effective": int(start_epoch),
+            "stop_after_epoch_effective": int(stop_after_epoch),
         }
         self.set_effective_params(resolved)
 

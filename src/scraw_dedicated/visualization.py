@@ -724,6 +724,7 @@ def plot_umap_snapshots_categorical_panels(
     point_size: int = 3,
     random_state: int = 42,
     max_cols: int = 4,
+    projection_2d_per_snapshot: Optional[List[np.ndarray]] = None,
     params_info: Optional[Dict[str, Any]] = None,
     dataset_info: Optional[str] = None,
 ) -> Optional[plt.Figure]:
@@ -746,12 +747,17 @@ def plot_umap_snapshots_categorical_panels(
     if len(labels_arr) != n_cells:
         return None
 
-    umap_list, _ = _compute_shared_umap_sequence(
-        [np.asarray(s["embeddings"]) for s in valid],
-        random_state=random_state,
-    )
-    if not umap_list:
-        return None
+    if projection_2d_per_snapshot is not None:
+        umap_list = [np.asarray(x) for x in projection_2d_per_snapshot]
+        if len(umap_list) != len(valid):
+            return None
+    else:
+        umap_list, _ = _compute_shared_umap_sequence(
+            [np.asarray(s["embeddings"]) for s in valid],
+            random_state=random_state,
+        )
+        if not umap_list:
+            return None
 
     encoded, unique_labels, _ = _encode_labels(labels_arr)
     n_unique = len(unique_labels)
@@ -872,6 +878,7 @@ def plot_umap_snapshots_gradient_panels(
     point_size: int = 3,
     random_state: int = 42,
     max_cols: int = 4,
+    projection_2d_per_snapshot: Optional[List[np.ndarray]] = None,
     current_row_label: str = "Epoch n",
     lagged_row_label: str = "Epoch n-10 projected on epoch n latent",
     params_info: Optional[Dict[str, Any]] = None,
@@ -892,9 +899,14 @@ def plot_umap_snapshots_gradient_panels(
     arrays = [np.asarray(s.get("embeddings")) for s in embedding_snapshots]
     if any(a.ndim != 2 or a.shape[0] == 0 for a in arrays):
         return None
-    umap_list, _ = _compute_shared_umap_sequence(arrays, random_state=random_state)
-    if not umap_list:
-        return None
+    if projection_2d_per_snapshot is not None:
+        umap_list = [np.asarray(x) for x in projection_2d_per_snapshot]
+        if len(umap_list) != len(embedding_snapshots):
+            return None
+    else:
+        umap_list, _ = _compute_shared_umap_sequence(arrays, random_state=random_state)
+        if not umap_list:
+            return None
 
     rows = 2 if lagged_weights is not None else 1
     n_cols = max(1, min(int(max_cols), n_snap))

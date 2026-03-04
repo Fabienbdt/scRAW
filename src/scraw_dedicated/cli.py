@@ -724,6 +724,7 @@ def run_once(args: argparse.Namespace) -> int:
 
     from .algorithms.scraw_algorithm import ScRAWAlgorithm
     from .visualization import (
+        _compute_shared_umap_sequence,
         plot_loss_curves,
         plot_loss_curves_timeline,
         plot_marker_overlap_heatmap,
@@ -1187,6 +1188,16 @@ def run_once(args: argparse.Namespace) -> int:
             plt.close(fig_wg)
 
         if selected_snapshots:
+            shared_snapshot_proj: Optional[List[np.ndarray]] = None
+            try:
+                shared_snapshot_proj, _ = _compute_shared_umap_sequence(
+                    [np.asarray(s["embeddings"], dtype=np.float32) for s in selected_snapshots],
+                    random_state=args.seed,
+                )
+            except Exception as exc:
+                logger.warning("Shared UMAP projection for snapshot panels failed: %s", exc)
+                shared_snapshot_proj = None
+
             labels_for_panels = true_labels_raw if true_labels_raw is not None else pred_labels
             fig_labels_panel = plot_umap_snapshots_categorical_panels(
                 embedding_snapshots=selected_snapshots,
@@ -1194,6 +1205,7 @@ def run_once(args: argparse.Namespace) -> int:
                 title="UMAP snapshots (labels) - epoch 0 pre-backward, epoch 29, then every 10 epochs",
                 point_size=3,
                 random_state=args.seed,
+                projection_2d_per_snapshot=shared_snapshot_proj,
                 params_info=params_info,
                 dataset_info=dataset_info,
             )
@@ -1212,6 +1224,7 @@ def run_once(args: argparse.Namespace) -> int:
                     title=f"UMAP snapshots (batch={batch_key}) - epoch 0 pre-backward, epoch 29, then every 10 epochs",
                     point_size=3,
                     random_state=args.seed,
+                    projection_2d_per_snapshot=shared_snapshot_proj,
                     params_info=params_info,
                     dataset_info=dataset_info,
                 )
@@ -1245,6 +1258,7 @@ def run_once(args: argparse.Namespace) -> int:
                     title=f"UMAP snapshots ({comp_name})",
                     point_size=3,
                     random_state=args.seed,
+                    projection_2d_per_snapshot=shared_snapshot_proj,
                     current_row_label="Current epoch n weights",
                     lagged_row_label="Lagged epoch n-10 weights on epoch n latent",
                     params_info=params_info,
