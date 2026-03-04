@@ -12,6 +12,7 @@ SEARCH_GROUPS="${SEARCH_GROUPS:-baseline,dann}"
 MAX_RUNS="${MAX_RUNS:-0}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 RUN_LOSS_ABLATION="${RUN_LOSS_ABLATION:-0}"
+DANN_CONTROLS="${DANN_CONTROLS:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
@@ -49,6 +50,12 @@ if [[ "${RUN_LOSS_ABLATION}" == "1" ]]; then
   CMD+=("--run-loss-ablation")
 else
   CMD+=("--no-loss-ablation")
+fi
+
+if [[ "${DANN_CONTROLS}" == "1" ]]; then
+  CMD+=("--dann-controls")
+else
+  CMD+=("--no-dann-controls")
 fi
 
 if [[ "${DRY_RUN}" == "1" ]]; then

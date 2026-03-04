@@ -223,6 +223,19 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         dest="run_loss_ablation",
         help="Disable post-search loss ablation study.",
     )
+    p.add_argument(
+        "--dann-controls",
+        action="store_true",
+        default=True,
+        dest="dann_controls",
+        help="Include DANN control runs (triplet off, NB->MSE, weighted uniform, DANN+MMD).",
+    )
+    p.add_argument(
+        "--no-dann-controls",
+        action="store_false",
+        dest="dann_controls",
+        help="Disable DANN control runs in `dann` search group.",
+    )
     return p.parse_args(argv)
 
 
@@ -378,16 +391,17 @@ def _build_plan(args: argparse.Namespace) -> Tuple[List[RunSpec], Dict[str, Any]
                         )
                     )
 
-        for scenario, extra in DANN_CONTROL_SWEEP.items():
-            overrides = dict(dann_base)
-            overrides.update(extra)
-            plan.append(
-                RunSpec(
-                    group="04_dann_focus/03_controls",
-                    name=scenario,
-                    overrides=overrides,
+        if bool(getattr(args, "dann_controls", True)):
+            for scenario, extra in DANN_CONTROL_SWEEP.items():
+                overrides = dict(dann_base)
+                overrides.update(extra)
+                plan.append(
+                    RunSpec(
+                        group="04_dann_focus/03_controls",
+                        name=scenario,
+                        overrides=overrides,
+                    )
                 )
-            )
 
     # Stable order for reproducibility.
     plan.sort(key=lambda x: (x.group, x.name))
