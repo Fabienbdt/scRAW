@@ -36,9 +36,15 @@ SINGLE_PARAM_SWEEP: Dict[str, List[Any]] = {
     "batch_size": [128, 256, 512],
     "dropout": [0.05, 0.1, 0.2],
     "z_dim": [64, 128, 256],
+    "warmup_epochs": [20, 30, 40],
     "weight_exponent": [0.1, 0.2, 0.4],
     "cluster_density_alpha": [0.4, 0.6, 0.8],
+    "density_weight_clip": [3.0, 5.0, 8.0],
+    "dynamic_weight_update_interval": [5, 10, 20],
+    "min_cell_weight": [0.15, 0.25, 0.5],
+    "max_cell_weight": [5.0, 10.0, 20.0],
     "rare_triplet_weight": [0.05, 0.1, 0.2],
+    "rare_triplet_margin": [0.2, 0.4, 0.6],
     "rare_triplet_start_epoch": [25, 35, 45],
     "hdbscan_min_cluster_size": [3, 4, 6],
     "hdbscan_min_samples": [1, 2, 4],
@@ -50,6 +56,8 @@ PAIRWISE_SWEEP: List[Tuple[str, List[Any], str, List[Any]]] = [
     ("lr", [5e-4, 1e-3, 2e-3], "batch_size", [128, 256, 512]),
     ("cluster_density_alpha", [0.4, 0.6, 0.8], "rare_triplet_weight", [0.05, 0.1, 0.2]),
     ("hdbscan_min_cluster_size", [3, 4, 6], "hdbscan_min_samples", [1, 2, 4]),
+    ("weight_exponent", [0.1, 0.2, 0.4], "cluster_density_alpha", [0.4, 0.6, 0.8]),
+    ("warmup_epochs", [20, 30, 40], "rare_triplet_start_epoch", [20, 30, 40]),
 ]
 
 BATCH_CORRECTION_SWEEP: Dict[str, Dict[str, Any]] = {
@@ -115,8 +123,14 @@ DANN_SINGLE_PARAM_SWEEP: Dict[str, List[Any]] = {
     "adversarial_lambda": [0.25, 0.5, 0.75, 1.0],
     "adversarial_start_epoch": [10, 20, 30, 40],
     "adversarial_ramp_epochs": [10, 20, 40, 60],
+    "warmup_epochs": [20, 30, 40],
     "weight_exponent": [0.2, 0.3, 0.4, 0.5],
+    "density_weight_clip": [3.0, 5.0, 8.0],
+    "dynamic_weight_update_interval": [5, 10, 20],
+    "min_cell_weight": [0.15, 0.25, 0.5],
+    "max_cell_weight": [5.0, 10.0, 20.0],
     "rare_triplet_weight": [0.05, 0.1, 0.15],
+    "rare_triplet_margin": [0.2, 0.4, 0.6],
     "rare_triplet_start_epoch": [25, 35, 45],
     "cluster_density_alpha": [0.4, 0.6, 0.8],
     "lr": [5e-4, 1e-3, 2e-3],
@@ -163,6 +177,18 @@ DANN_PAIRWISE_SWEEP: List[Tuple[str, List[Any], str, List[Any]]] = [
         "cluster_density_alpha",
         [0.4, 0.6, 0.8],
     ),
+    (
+        "warmup_epochs",
+        [20, 30, 40],
+        "rare_triplet_start_epoch",
+        [20, 30, 40],
+    ),
+    (
+        "weight_exponent",
+        [0.2, 0.3, 0.4, 0.5],
+        "cluster_density_alpha",
+        [0.4, 0.6, 0.8],
+    ),
 ]
 
 DANN_CONTROL_SWEEP: Dict[str, Dict[str, Any]] = {
@@ -198,6 +224,30 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=int,
         default=0,
         help="Optional hard cap on number of runs (0 = no cap).",
+    )
+    p.add_argument(
+        "--max-runs-selection",
+        choices=["head", "random"],
+        default="head",
+        help="When --max-runs > 0: keep first runs (head) or deterministic random subset (random).",
+    )
+    p.add_argument(
+        "--n-seeds",
+        type=int,
+        default=1,
+        help="Number of seeds for top-k refinement stage (1 disables multi-seed refinement).",
+    )
+    p.add_argument(
+        "--seed-step",
+        type=int,
+        default=97,
+        help="Step used to build deterministic seed sequence from base --seed.",
+    )
+    p.add_argument(
+        "--refine-top-k",
+        type=int,
+        default=0,
+        help="After coarse search, rerun top-k configs across n-seeds (0 disables).",
     )
     p.add_argument("--python-bin", default=sys.executable)
     p.add_argument("--dry-run", action="store_true")
@@ -287,6 +337,301 @@ def _subprocess_env() -> Dict[str, str]:
     env.setdefault("NUMBA_DISABLE_JIT", "1")
     env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     return env
+
+
+def _seed_sequence(base_seed: int, n_seeds: int, seed_step: int) -> List[int]:
+    """Build deterministic seed sequence for refinement stage."""
+    n = max(1, int(n_seeds))
+    step = max(1, int(seed_step))
+    start = int(base_seed)
+    return [start + i * step for i in range(n)]
+
+
+def _run_topk_multiseed_refinement(
+    args: argparse.Namespace,
+    data_path: Path,
+    output_root: Path,
+    ranked_rows: List[Dict[str, Any]],
+    env: Dict[str, str],
+) -> Dict[str, Any]:
+    """Rerun top-k coarse configs across multiple seeds and aggregate metrics."""
+    if bool(getattr(args, "dry_run", False)):
+        return {"status": "disabled_dry_run"}
+    if int(getattr(args, "refine_top_k", 0) or 0) <= 0:
+        return {"status": "disabled_refine_top_k"}
+    if int(getattr(args, "n_seeds", 1) or 1) <= 1:
+        return {"status": "disabled_n_seeds_le_1"}
+
+    candidates = [r for r in ranked_rows if np.isfinite(float(r.get("score", np.nan)))]
+    candidates = candidates[: int(args.refine_top_k)]
+    if not candidates:
+        return {"status": "skipped_no_finite_candidates"}
+
+    seeds = _seed_sequence(args.seed, args.n_seeds, args.seed_step)
+    refine_root = output_root / "refine_topk_multiseed"
+    runs_root = refine_root / "runs"
+    logs_root = refine_root / "logs"
+    summaries_root = refine_root / "summaries"
+    meta_root = refine_root / "meta"
+    for d in (refine_root, runs_root, logs_root, summaries_root, meta_root):
+        d.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "source": "topk_multiseed_refinement",
+        "preset": args.preset,
+        "data": str(data_path),
+        "device": args.device,
+        "base_seed": int(args.seed),
+        "seed_step": int(args.seed_step),
+        "seeds": [int(s) for s in seeds],
+        "n_seeds": len(seeds),
+        "refine_top_k": int(args.refine_top_k),
+        "score_formula": "mean(NMI,ARI,ACC,F1_Macro,BalancedACC)",
+        "cluster_count_penalty": "none",
+        "candidates": [
+            {
+                "coarse_rank": int(idx + 1),
+                "group": str(row.get("group", "")),
+                "name": str(row.get("name", "")),
+                "coarse_score": float(row.get("score", np.nan)),
+                "overrides": _load_overrides_json(row.get("overrides_json", "{}")),
+            }
+            for idx, row in enumerate(candidates)
+        ],
+    }
+    manifest_path = meta_root / "refine_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    seed_rows: List[Dict[str, Any]] = []
+    failures = 0
+    metric_keys = [
+        "NMI",
+        "ARI",
+        "ACC",
+        "F1_Macro",
+        "BalancedACC",
+        "RareACC",
+        "Silhouette",
+        "n_clusters_found",
+        "runtime",
+    ]
+
+    print("\nStarting top-k multi-seed refinement:")
+    print(f"  top_k={int(args.refine_top_k)} seeds={seeds}")
+    for c_idx, coarse_row in enumerate(candidates, start=1):
+        group = str(coarse_row.get("group", ""))
+        name = str(coarse_row.get("name", ""))
+        overrides = _load_overrides_json(coarse_row.get("overrides_json", "{}"))
+        spec = RunSpec(group=group, name=name, overrides=overrides)
+        token = f"{c_idx:03d}_{group.replace('/', '_')}__{name}"
+        coarse_score = float(coarse_row.get("score", np.nan))
+
+        for s_idx, seed_value in enumerate(seeds, start=1):
+            run_dir = runs_root / token / f"seed_{int(seed_value)}"
+            log_file = logs_root / token / f"seed_{int(seed_value)}.log"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+
+            cmd = _build_cmd(
+                args,
+                data_path,
+                run_dir,
+                spec,
+                metrics_only=True,
+                capture_snapshots="off",
+                snapshot_interval=10,
+                seed_override=int(seed_value),
+            )
+            cmd_text = " ".join(shlex.quote(c) for c in cmd)
+            print(
+                f"[REF {c_idx:03d}/{len(candidates):03d} | "
+                f"SEED {s_idx:02d}/{len(seeds):02d}] {group}/{name} seed={int(seed_value)}"
+            )
+            print(f"  {cmd_text}")
+
+            metrics_csv = run_dir / "results" / "analysis_results.csv"
+            if args.skip_existing and metrics_csv.exists():
+                rc = 0
+                status = "existing"
+            elif args.dry_run:
+                rc = 0
+                status = "dry_run"
+            else:
+                with log_file.open("w") as fh:
+                    proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env)
+                rc = int(proc.returncode)
+                status = "ok" if rc == 0 else f"failed_{rc}"
+
+            metrics = _read_metrics_from_run(run_dir)
+            if rc != 0:
+                failures += 1
+
+            row: Dict[str, Any] = {
+                "candidate_rank": int(c_idx),
+                "candidate_id": token,
+                "group": group,
+                "name": name,
+                "seed": int(seed_value),
+                "status": status if status != "ok" else metrics.get("status", "ok"),
+                "run_dir": str(run_dir),
+                "log_file": str(log_file),
+                "overrides_json": json.dumps(overrides, sort_keys=True),
+                "coarse_score": coarse_score,
+            }
+            for key in metric_keys:
+                row[key] = metrics.get(key)
+            row["score"] = _score_from_row(row)
+            seed_rows.append(row)
+
+    seed_fields = [
+        "candidate_rank",
+        "candidate_id",
+        "group",
+        "name",
+        "seed",
+        "status",
+        "run_dir",
+        "log_file",
+        "overrides_json",
+        "coarse_score",
+        "NMI",
+        "ARI",
+        "ACC",
+        "F1_Macro",
+        "BalancedACC",
+        "RareACC",
+        "Silhouette",
+        "n_clusters_found",
+        "runtime",
+        "score",
+    ]
+    seed_csv = summaries_root / "multiseed_all_seed_runs.csv"
+    with seed_csv.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=seed_fields)
+        writer.writeheader()
+        for row in seed_rows:
+            writer.writerow(row)
+
+    aggregated: List[Dict[str, Any]] = []
+    for c_idx, coarse_row in enumerate(candidates, start=1):
+        group = str(coarse_row.get("group", ""))
+        name = str(coarse_row.get("name", ""))
+        token = f"{c_idx:03d}_{group.replace('/', '_')}__{name}"
+        sub = [r for r in seed_rows if r.get("candidate_id") == token]
+        if not sub:
+            continue
+
+        agg: Dict[str, Any] = {
+            "candidate_rank": int(c_idx),
+            "candidate_id": token,
+            "group": group,
+            "name": name,
+            "n_seed_runs": int(len(sub)),
+            "n_seed_ok": int(sum(1 for r in sub if str(r.get("status", "")).startswith(("ok", "existing")))),
+            "coarse_score": float(coarse_row.get("score", np.nan)),
+            "best_seed": np.nan,
+            "best_seed_score": np.nan,
+            "overrides_json": coarse_row.get("overrides_json", "{}"),
+        }
+
+        score_vals = [float(r.get("score", np.nan)) for r in sub if np.isfinite(float(r.get("score", np.nan)))]
+        if score_vals:
+            agg["score_mean"] = float(np.mean(score_vals))
+            agg["score_std"] = float(np.std(score_vals))
+            best_row = sorted(
+                [r for r in sub if np.isfinite(float(r.get("score", np.nan)))],
+                key=lambda r: -float(r.get("score", np.nan)),
+            )[0]
+            agg["best_seed"] = int(best_row.get("seed"))
+            agg["best_seed_score"] = float(best_row.get("score", np.nan))
+        else:
+            agg["score_mean"] = np.nan
+            agg["score_std"] = np.nan
+
+        mean_row_for_score: Dict[str, Any] = {}
+        for key in metric_keys:
+            vals = [float(r.get(key, np.nan)) for r in sub if np.isfinite(float(r.get(key, np.nan)))]
+            agg[f"{key}_mean"] = float(np.mean(vals)) if vals else np.nan
+            agg[f"{key}_std"] = float(np.std(vals)) if vals else np.nan
+            mean_row_for_score[key] = agg[f"{key}_mean"]
+
+        # Primary no-penalty score for top-k refinement ranking.
+        agg["score_mean_from_metric_means"] = _score_from_row(mean_row_for_score)
+        aggregated.append(agg)
+
+    agg_fields = [
+        "candidate_rank",
+        "candidate_id",
+        "group",
+        "name",
+        "n_seed_runs",
+        "n_seed_ok",
+        "coarse_score",
+        "score_mean",
+        "score_std",
+        "score_mean_from_metric_means",
+        "best_seed",
+        "best_seed_score",
+        "NMI_mean",
+        "NMI_std",
+        "ARI_mean",
+        "ARI_std",
+        "ACC_mean",
+        "ACC_std",
+        "F1_Macro_mean",
+        "F1_Macro_std",
+        "BalancedACC_mean",
+        "BalancedACC_std",
+        "RareACC_mean",
+        "RareACC_std",
+        "Silhouette_mean",
+        "Silhouette_std",
+        "n_clusters_found_mean",
+        "n_clusters_found_std",
+        "runtime_mean",
+        "runtime_std",
+        "overrides_json",
+    ]
+    agg_csv = summaries_root / "multiseed_aggregated_topk.csv"
+    with agg_csv.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=agg_fields)
+        writer.writeheader()
+        for row in aggregated:
+            writer.writerow(row)
+
+    ranked = sorted(
+        aggregated,
+        key=lambda r: (
+            -float(r.get("score_mean_from_metric_means", np.nan))
+            if np.isfinite(float(r.get("score_mean_from_metric_means", np.nan)))
+            else float("inf"),
+            str(r.get("group", "")),
+            str(r.get("name", "")),
+        ),
+    )
+    ranked_csv = summaries_root / "multiseed_ranked_by_score_mean.csv"
+    with ranked_csv.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=agg_fields)
+        writer.writeheader()
+        for row in ranked:
+            writer.writerow(row)
+
+    summary = {
+        "status": "ok",
+        "n_candidates": len(candidates),
+        "n_seed_runs": len(seed_rows),
+        "n_failures": failures,
+        "seeds": [int(s) for s in seeds],
+        "manifest_json": str(manifest_path),
+        "all_seed_runs_csv": str(seed_csv),
+        "aggregated_csv": str(agg_csv),
+        "ranked_csv": str(ranked_csv),
+        "output_root": str(refine_root),
+    }
+    summary_path = meta_root / "refine_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    summary["summary_json"] = str(summary_path)
+    return summary
 
 
 def _build_plan(args: argparse.Namespace) -> Tuple[List[RunSpec], Dict[str, Any]]:
@@ -409,7 +754,15 @@ def _build_plan(args: argparse.Namespace) -> Tuple[List[RunSpec], Dict[str, Any]
     # Stable order for reproducibility.
     plan.sort(key=lambda x: (x.group, x.name))
     if args.max_runs and args.max_runs > 0:
-        plan = plan[: int(args.max_runs)]
+        max_runs = int(args.max_runs)
+        if len(plan) > max_runs:
+            if str(getattr(args, "max_runs_selection", "head")) == "random":
+                rng = np.random.default_rng(int(args.seed))
+                idx = rng.choice(len(plan), size=max_runs, replace=False)
+                plan = [plan[int(i)] for i in idx]
+                plan.sort(key=lambda x: (x.group, x.name))
+            else:
+                plan = plan[:max_runs]
     return plan, baseline_params
 
 
@@ -500,8 +853,10 @@ def _build_cmd(
     metrics_only: bool = True,
     capture_snapshots: str = "off",
     snapshot_interval: int = 10,
+    seed_override: Optional[int] = None,
 ) -> List[str]:
     """Build one scRAW CLI command."""
+    seed_value = int(args.seed if seed_override is None else seed_override)
     cmd = [
         args.python_bin,
         "-m",
@@ -513,7 +868,7 @@ def _build_cmd(
         "--output",
         str(run_dir),
         "--seed",
-        str(args.seed),
+        str(seed_value),
         "--device",
         args.device,
         "--capture-snapshots",
@@ -871,6 +1226,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "seed": args.seed,
         "device": args.device,
         "groups": args.groups,
+        "max_runs": int(args.max_runs),
+        "max_runs_selection": str(args.max_runs_selection),
+        "n_seeds_refine": int(args.n_seeds),
+        "seed_step_refine": int(args.seed_step),
+        "refine_top_k": int(args.refine_top_k),
         "metrics_only_forced": True,
         "capture_snapshots": "off",
         "baseline_params": baseline_params,
@@ -1004,6 +1364,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "best_by_group_csv": str(best_csv),
     }
 
+    refine_summary = _run_topk_multiseed_refinement(
+        args=args,
+        data_path=data_path,
+        output_root=output_root,
+        ranked_rows=ranked,
+        env=env,
+    )
+    run_info["topk_multiseed_refinement"] = refine_summary
+    if isinstance(refine_summary, dict) and refine_summary.get("status") == "ok":
+        failures += int(refine_summary.get("n_failures", 0) or 0)
+
     if args.run_loss_ablation:
         ablation_summary = _run_loss_ablation(
             args=args,
@@ -1028,6 +1399,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f" - {best_csv}")
     print(f" - {meta_root / 'search_manifest.json'}")
     print(f" - {meta_root / 'search_summary.json'}")
+    if isinstance(run_info.get("topk_multiseed_refinement"), dict):
+        rf_status = run_info["topk_multiseed_refinement"].get("status")
+        if rf_status == "ok":
+            print(f" - {run_info['topk_multiseed_refinement'].get('all_seed_runs_csv')}")
+            print(f" - {run_info['topk_multiseed_refinement'].get('aggregated_csv')}")
+            print(f" - {run_info['topk_multiseed_refinement'].get('ranked_csv')}")
+            print(f" - {run_info['topk_multiseed_refinement'].get('summary_json')}")
+        else:
+            print(f"Top-k multiseed refinement: {rf_status}")
     if isinstance(run_info.get("loss_ablation"), dict):
         ab_status = run_info["loss_ablation"].get("status")
         if ab_status == "ok":

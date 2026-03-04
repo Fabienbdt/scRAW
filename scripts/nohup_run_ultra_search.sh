@@ -10,6 +10,8 @@ DEVICE="${DEVICE:-cuda}"
 SEED="${SEED:-42}"
 N_TRIALS="${N_TRIALS:-300}"
 N_SEEDS="${N_SEEDS:-1}"
+REFINE_TOP_K="${REFINE_TOP_K:-24}"
+MAX_RUNS_SELECTION="${MAX_RUNS_SELECTION:-random}"
 SEARCH_GROUPS="${SEARCH_GROUPS:-baseline,single,pairwise,batch,dann}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 RUN_LOSS_ABLATION="${RUN_LOSS_ABLATION:-0}"
@@ -54,10 +56,16 @@ CMD=(
   "--device" "${DEVICE}"
   "--seed" "${SEED}"
   "--groups" "${SEARCH_GROUPS}"
+  "--max-runs-selection" "${MAX_RUNS_SELECTION}"
+  "--n-seeds" "${N_SEEDS}"
 )
 
 if [[ "${N_TRIALS}" != "0" ]]; then
   CMD+=("--max-runs" "${N_TRIALS}")
+fi
+
+if [[ "${REFINE_TOP_K}" != "0" ]]; then
+  CMD+=("--refine-top-k" "${REFINE_TOP_K}")
 fi
 
 if [[ "${SKIP_EXISTING}" == "1" ]]; then
@@ -91,11 +99,10 @@ fi
   echo "Output root: ${OUTPUT_ROOT}"
   echo "N trials: ${N_TRIALS}"
   echo "N seeds: ${N_SEEDS}"
+  echo "Refine top-k: ${REFINE_TOP_K}"
+  echo "Max-runs selection: ${MAX_RUNS_SELECTION}"
   echo "Search groups: ${SEARCH_GROUPS}"
   echo "Device: ${DEVICE}"
-  if [[ "${N_SEEDS}" != "1" ]]; then
-    echo "Note: current runner supports one seed per run; N_SEEDS is informational only."
-  fi
   if [[ -n "${TIMEOUT}" ]]; then
     echo "Timeout requested: ${TIMEOUT}"
   fi
