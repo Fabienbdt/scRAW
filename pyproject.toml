@@ -23,8 +23,6 @@ dependencies = [
 
 [project.scripts]
 scraw-run = "scraw_dedicated.cli:main"
-scraw-seeds = "scraw_dedicated.seed_robustness:main"
-scraw-deep2 = "scraw_dedicated.deep2_sweep:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
