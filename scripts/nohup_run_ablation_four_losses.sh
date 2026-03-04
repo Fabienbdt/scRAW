@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-/Users/fabienbidet/miniforge3/envs/scrbenchmark/bin/python}"
 SEARCH_ROOT="${SEARCH_ROOT:-${ROOT_DIR}/results/hparam_search/baron_best_baron_human_pancreas_metrics_only_20260304_005801}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${SEARCH_ROOT}/ablation_loss_impact}"
+DEVICE="${DEVICE:-}"
 RESUME_EPOCH="${RESUME_EPOCH:-30}"
 SNAPSHOT_INTERVAL="${SNAPSHOT_INTERVAL:-10}"
 OVERWRITE="${OVERWRITE:-1}"
@@ -15,6 +16,8 @@ DRY_RUN="${DRY_RUN:-0}"
 LOG_FILE="${LOG_FILE:-${SEARCH_ROOT}/nohup_ablation_four_losses_$(date +%Y%m%d_%H%M%S).log}"
 
 CMD=(
+  "env"
+  "PYTHONUNBUFFERED=1"
   "${PYTHON_BIN}"
   "${ROOT_DIR}/scripts/run_ablation_four_losses.py"
   "--search-root" "${SEARCH_ROOT}"
@@ -22,6 +25,10 @@ CMD=(
   "--resume-epoch" "${RESUME_EPOCH}"
   "--snapshot-interval" "${SNAPSHOT_INTERVAL}"
 )
+
+if [[ -n "${DEVICE}" ]]; then
+  CMD+=("--device" "${DEVICE}")
+fi
 
 if [[ "${OVERWRITE}" == "1" ]]; then
   CMD+=("--overwrite")

@@ -14,32 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 def _to_array(values: Any) -> np.ndarray:
-    """Helper interne: to array.
-    
-    
-    Args:
-        values: Paramètre d'entrée `values` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Convert any array-like input to a NumPy array."""
     return np.asarray(values)
 
 
 def _filter_noise(
     labels_true: Optional[np.ndarray], labels_pred: np.ndarray, embeddings: Optional[np.ndarray]
 ) -> Tuple[Optional[np.ndarray], np.ndarray, Optional[np.ndarray]]:
-    """Helper interne: filter noise.
-    
-    
-    Args:
-        labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
-        labels_pred: Paramètre d'entrée `labels_pred` utilisé dans cette étape du pipeline.
-        embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Remove rows marked as noise in predicted/true labels (and embeddings)."""
     mask_pred = np.ones(len(labels_pred), dtype=bool)
     labels_pred_str = labels_pred.astype(str)
     for v in NOISE_LABELS:
@@ -61,16 +43,7 @@ def _filter_noise(
 
 
 def align_labels(labels_true: np.ndarray, labels_pred: np.ndarray) -> np.ndarray:
-    """Réalise l'opération `align labels` du module `metrics`.
-    
-    
-    Args:
-        labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
-        labels_pred: Paramètre d'entrée `labels_pred` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Align predicted clusters to true labels with Hungarian matching."""
     labels_true = _to_array(labels_true)
     labels_pred = _to_array(labels_pred)
     if len(labels_true) != len(labels_pred):
@@ -201,16 +174,7 @@ def marker_overlap_annotation(
 
 
 def _accuracy(labels_true: np.ndarray, labels_pred: np.ndarray) -> float:
-    """Helper interne: accuracy.
-    
-    
-    Args:
-        labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
-        labels_pred: Paramètre d'entrée `labels_pred` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Compute accuracy after Hungarian alignment."""
     labels_true = _to_array(labels_true)
     labels_pred = _to_array(labels_pred)
     aligned = align_labels(labels_true, labels_pred)
@@ -218,16 +182,7 @@ def _accuracy(labels_true: np.ndarray, labels_pred: np.ndarray) -> float:
 
 
 def _balanced_metrics(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[str, float]:
-    """Helper interne: balanced metrics.
-    
-    
-    Args:
-        labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
-        labels_pred: Paramètre d'entrée `labels_pred` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Compute macro F1 and balanced accuracy after label alignment."""
     from sklearn.metrics import balanced_accuracy_score, f1_score
 
     aligned = align_labels(labels_true, labels_pred)
@@ -238,17 +193,7 @@ def _balanced_metrics(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[
 
 
 def _rare_acc(labels_true: np.ndarray, labels_pred: np.ndarray, threshold: float = 0.05) -> Optional[float]:
-    """Helper interne: rare acc.
-    
-    
-    Args:
-        labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
-        labels_pred: Paramètre d'entrée `labels_pred` utilisé dans cette étape du pipeline.
-        threshold: Paramètre d'entrée `threshold` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Compute accuracy restricted to rare classes below `threshold` frequency."""
     labels_true = _to_array(labels_true)
     aligned = align_labels(labels_true, labels_pred)
     classes, counts = np.unique(labels_true, return_counts=True)
@@ -263,16 +208,7 @@ def _rare_acc(labels_true: np.ndarray, labels_pred: np.ndarray, threshold: float
 
 
 def _classwise(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[str, Dict[str, float]]:
-    """Helper interne: classwise.
-    
-    
-    Args:
-        labels_true: Paramètre d'entrée `labels_true` utilisé dans cette étape du pipeline.
-        labels_pred: Paramètre d'entrée `labels_pred` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Return per-class precision/recall/F1/support after alignment."""
     from sklearn.metrics import precision_recall_fscore_support
 
     labels_true = _to_array(labels_true)
@@ -294,17 +230,7 @@ def _classwise(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[str, Di
 
 
 def _silhouette(embeddings: np.ndarray, labels_pred: np.ndarray, sample_size: Optional[int] = 5000) -> float:
-    """Helper interne: silhouette.
-    
-    
-    Args:
-        embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
-        labels_pred: Paramètre d'entrée `labels_pred` utilisé dans cette étape du pipeline.
-        sample_size: Paramètre d'entrée `sample_size` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Compute silhouette score with optional random subsampling."""
     from sklearn.metrics import silhouette_score
 
     if len(np.unique(labels_pred)) < 2:
@@ -324,17 +250,7 @@ def _silhouette(embeddings: np.ndarray, labels_pred: np.ndarray, sample_size: Op
 
 
 def _knn_purity(latent: np.ndarray, labels: np.ndarray, n_neighbors: int = 30) -> float:
-    """Helper interne: knn purity.
-    
-    
-    Args:
-        latent: Paramètre d'entrée `latent` utilisé dans cette étape du pipeline.
-        labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
-        n_neighbors: Paramètre d'entrée `n_neighbors` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Compute class-balanced kNN purity in latent space."""
     from sklearn.neighbors import NearestNeighbors
 
     latent = _to_array(latent)
@@ -359,7 +275,7 @@ def compute_metrics(
     labels_pred: np.ndarray,
     embeddings: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
-    """Compute metric bundle compatible with SCRBenchmark standard outputs."""
+    """Compute the full clustering metric bundle used by scRAW outputs."""
     from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
     labels_pred = _to_array(labels_pred)

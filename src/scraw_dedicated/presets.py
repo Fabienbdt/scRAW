@@ -85,16 +85,7 @@ _COMMON_ALGO: Dict[str, Any] = {
 
 
 def _merge(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
-    """Fusionne deux dictionnaires de configuration sans modifier l'original.
-    
-    
-    Args:
-        base: Paramètre d'entrée `base` utilisé dans cette étape du pipeline.
-        update: Paramètre d'entrée `update` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Return `base` updated with `update`, without mutating the input dict."""
     out = deepcopy(base)
     out.update(update)
     return out
@@ -173,15 +164,7 @@ PRESETS: Dict[str, ScrawPreset] = {
 
 
 def get_preset(name: str) -> ScrawPreset:
-    """Retourne un preset valide à partir de son nom et lève une erreur sinon.
-    
-    
-    Args:
-        name: Paramètre d'entrée `name` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Resolve a preset name (case-insensitive) or raise a clear error."""
     key = name.strip().lower()
     if key not in PRESETS:
         available = ", ".join(sorted(PRESETS))

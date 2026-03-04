@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def preprocess_adata(adata: Any, params: Dict[str, Any]) -> Any:
-    """Apply the preprocessing steps used by the reference SCRBenchmark runs.
+    """Apply the standard preprocessing pipeline expected by scRAW.
 
     Expected params keys:
       - min_genes_per_cell
@@ -79,7 +79,7 @@ def preprocess_adata(adata: Any, params: Dict[str, Any]) -> Any:
             except Exception as exc:
                 logger.warning("HVG selection failed (%s). Continuing without HVG subset.", exc)
 
-    # Match SCRBenchmark DataHandler behavior: explicit z-score + clipping.
+    # Final explicit z-score normalization with clipping for numerical stability.
     scale_max = float(params.get("scale_max_value", 10.0))
     X = adata.X
     if hasattr(X, "toarray"):

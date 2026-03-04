@@ -37,7 +37,7 @@ class ScrawClusteringMixin:
         return int(max(2, min(int(k), upper)))
 
     def _estimate_unsupervised_k_heuristic(self, n_cells: int) -> int:
-        """Legacy size-based K heuristic used in SCRBenchmark."""
+        """Legacy size-based heuristic to estimate a reasonable pseudo-label K."""
         n_cells = int(max(1, n_cells))
         k_min = int(max(2, self._param("unsupervised_k_min", 8)))
         k_max = int(max(2, self._param("unsupervised_k_max", 30)))
@@ -310,7 +310,7 @@ class ScrawClusteringMixin:
         return self._clip_k_to_data(best_k, n_cells)
 
     def _estimate_k(self, n_cells: int, embeddings: Optional[np.ndarray] = None) -> int:
-        """Estimate pseudo-label K with SCRBenchmark-compatible defaults."""
+        """Estimate pseudo-label K from user config, fallback, or automatic selection."""
         k_effective = int(self._param("_pseudo_n_clusters", 0) or 0)
         if k_effective > 1:
             return self._clip_k_to_data(k_effective, n_cells)
@@ -519,7 +519,7 @@ class ScrawClusteringMixin:
 
     def _merge_close_hdbscan_siblings(self, embeddings: np.ndarray, labels: np.ndarray) -> np.ndarray:
         """Merge one obviously over-segmented close cluster pair (if any)."""
-        # Disabled by default for strict parity with SCRBenchmark scRAW baseline.
+        # Disabled by default to keep a conservative post-processing behavior.
         enable = bool(self._param("hdbscan_merge_close_clusters", False))
         if not enable:
             return np.asarray(labels, dtype=np.int64)

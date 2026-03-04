@@ -24,15 +24,7 @@ logger = logging.getLogger("scraw_dedicated")
 
 
 def _setup_logging(verbose: bool) -> None:
-    """Configure le niveau et le format des logs pour le terminal.
-    
-    
-    Args:
-        verbose: Paramètre d'entrée `verbose` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Configure console logging level and format."""
     level = logging.INFO if verbose else logging.WARNING
     logging.basicConfig(
         level=level,
@@ -54,22 +46,14 @@ def _configure_runtime_cache(output_dir: Path) -> None:
     os.environ.setdefault("NUMBA_CACHE_DIR", str(numba_dir))
     os.environ.setdefault("MPLCONFIGDIR", str(mpl_dir))
     os.environ.setdefault("XDG_CACHE_HOME", str(xdg_dir))
-    # Parity with reference SCRBenchmark scripts (Deep2 baseline).
+    # Keep runtime behavior deterministic and robust on different backends.
     os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
 def _detect_label_key(obs_columns: Sequence[str]) -> Optional[str]:
-    """Détecte automatiquement la colonne de labels biologiques dans `adata.obs`.
-    
-    
-    Args:
-        obs_columns: Paramètre d'entrée `obs_columns` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    # Keep same priority as SCRBenchmark DataHandler.LABEL_COLUMNS.
+    """Detect the most likely biological label column in `adata.obs`."""
+    # Keep a stable priority order for common single-cell datasets.
     candidates = [
         "Group",
         "label",
@@ -91,16 +75,7 @@ def _detect_label_key(obs_columns: Sequence[str]) -> Optional[str]:
 
 
 def _detect_batch_key(obs_columns: Sequence[str], preferred: Optional[str] = None) -> Optional[str]:
-    """Détecte automatiquement la colonne batch dans `adata.obs`.
-    
-    
-    Args:
-        obs_columns: Paramètre d'entrée `obs_columns` utilisé dans cette étape du pipeline.
-        preferred: Paramètre d'entrée `preferred` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Detect batch column in `adata.obs`, optionally honoring a preferred key."""
     if preferred and preferred in obs_columns:
         return preferred
     for c in ["batch", "Batch", "study", "dataset", "donor", "sample", "patient", "tech"]:
@@ -110,16 +85,7 @@ def _detect_batch_key(obs_columns: Sequence[str], preferred: Optional[str] = Non
 
 
 def _detect_batch_key_in_file(data_path: Path, preferred: Optional[str]) -> Optional[str]:
-    """Lit un fichier h5ad en mode léger pour détecter la colonne batch sans tout charger.
-    
-    
-    Args:
-        data_path: Paramètre d'entrée `data_path` utilisé dans cette étape du pipeline.
-        preferred: Paramètre d'entrée `preferred` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Detect batch key from an `.h5ad` file without loading full matrix data."""
     import anndata as ad
 
     adata = ad.read_h5ad(data_path, backed="r")
@@ -132,15 +98,7 @@ def _detect_batch_key_in_file(data_path: Path, preferred: Optional[str]) -> Opti
 
 
 def _as_jsonable(value: Any) -> Any:
-    """Helper interne: as jsonable.
-    
-    
-    Args:
-        value: Paramètre d'entrée `value` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Recursively convert NumPy types/arrays into JSON-serializable values."""
     if isinstance(value, (np.floating, np.float32, np.float64)):
         return float(value)
     if isinstance(value, (np.integer, np.int32, np.int64)):
@@ -155,30 +113,12 @@ def _as_jsonable(value: Any) -> Any:
 
 
 def _save_json(path: Path, payload: Dict[str, Any]) -> None:
-    """Helper interne: save json.
-    
-    
-    Args:
-        path: Paramètre d'entrée `path` utilisé dans cette étape du pipeline.
-        payload: Paramètre d'entrée `payload` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Write one dictionary as pretty JSON."""
     path.write_text(json.dumps(_as_jsonable(payload), indent=2), encoding="utf-8")
 
 
 def _save_csv(path: Path, row: Dict[str, Any]) -> None:
-    """Helper interne: save csv.
-    
-    
-    Args:
-        path: Paramètre d'entrée `path` utilisé dans cette étape du pipeline.
-        row: Paramètre d'entrée `row` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Write one dictionary as a single-row CSV file."""
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(row.keys()))
         writer.writeheader()
@@ -186,28 +126,12 @@ def _save_csv(path: Path, row: Dict[str, Any]) -> None:
 
 
 def _safe_numpy(x: Any) -> np.ndarray:
-    """Helper interne: safe numpy.
-    
-    
-    Args:
-        x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Convert input to a NumPy array."""
     return np.asarray(x)
 
 
 def _parse_scalar(raw: str) -> Any:
-    """Convertit une valeur texte CLI en booléen, entier, flottant, None ou chaîne.
-    
-    
-    Args:
-        raw: Paramètre d'entrée `raw` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Parse CLI scalar values into bool/int/float/None/string."""
     text = raw.strip()
     low = text.lower()
 
@@ -235,15 +159,7 @@ def _parse_scalar(raw: str) -> Any:
 
 
 def _parse_kv_overrides(items: Sequence[str]) -> Dict[str, Any]:
-    """Convertit une liste `KEY=VALUE` en dictionnaire Python prêt à l'emploi.
-    
-    
-    Args:
-        items: Paramètre d'entrée `items` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Parse repeated CLI overrides like `KEY=VALUE` into a Python dict."""
     out: Dict[str, Any] = {}
     for raw in items:
         if "=" not in raw:
@@ -252,8 +168,7 @@ def _parse_kv_overrides(items: Sequence[str]) -> Dict[str, Any]:
         key = key.strip()
         if not key:
             raise ValueError(f"Invalid override '{raw}'. Empty key.")
-        # Compatibility with legacy SCRBenchmark syntax: "scraw:param=value"
-        # (and similar namespace prefixes for preprocess overrides).
+        # Keep compatibility with namespaced legacy syntax: "scraw:param=value".
         if ":" in key:
             ns, bare_key = key.split(":", 1)
             ns = ns.strip().lower()
@@ -275,22 +190,7 @@ def _build_scraw_params(
     snapshot_interval: Optional[int],
     param_overrides: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Construit la configuration finale scRAW à partir du preset et des overrides utilisateur.
-    
-    
-    Args:
-        preset_name: Paramètre d'entrée `preset_name` utilisé dans cette étape du pipeline.
-        seed: Paramètre d'entrée `seed` utilisé dans cette étape du pipeline.
-        device: Paramètre d'entrée `device` utilisé dans cette étape du pipeline.
-        dann_mode: Paramètre d'entrée `dann_mode` utilisé dans cette étape du pipeline.
-        batch_key_override: Paramètre d'entrée `batch_key_override` utilisé dans cette étape du pipeline.
-        capture_snapshots: Paramètre d'entrée `capture_snapshots` utilisé dans cette étape du pipeline.
-        snapshot_interval: Paramètre d'entrée `snapshot_interval` utilisé dans cette étape du pipeline.
-        param_overrides: Paramètre d'entrée `param_overrides` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Build final algorithm params from preset + CLI overrides."""
     preset = get_preset(preset_name)
     params = dict(preset.algorithm_params)
 
@@ -322,15 +222,7 @@ def _build_scraw_params(
 
 
 def _label_encoding(labels: Sequence[Any]) -> Tuple[np.ndarray, Dict[str, str]]:
-    """Helper interne: label encoding.
-    
-    
-    Args:
-        labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Encode arbitrary labels to contiguous integers and return reverse map."""
     labels = np.asarray([str(x) for x in labels], dtype=object)
     uniq = sorted(np.unique(labels).tolist())
     to_idx = {lab: i for i, lab in enumerate(uniq)}
@@ -340,16 +232,7 @@ def _label_encoding(labels: Sequence[Any]) -> Tuple[np.ndarray, Dict[str, str]]:
 
 
 def _extract_final_cell_weights(snapshots: List[Dict[str, Any]], n_cells: int) -> Optional[np.ndarray]:
-    """Helper interne: extract final cell weights.
-    
-    
-    Args:
-        snapshots: Paramètre d'entrée `snapshots` utilisé dans cette étape du pipeline.
-        n_cells: Paramètre d'entrée `n_cells` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Extract the most recent valid per-cell fused weight vector from snapshots."""
     for snap in reversed(snapshots):
         w = snap.get("cell_weights")
         if w is None:
@@ -590,15 +473,7 @@ def _write_rows_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
 
 
 def _hyperparams_declared() -> List[Dict[str, Any]]:
-    """Expose la liste des hyperparamètres déclarés par l'algorithme scRAW.
-    
-    
-    Args:
-        Aucun argument explicite en dehors du contexte objet.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Export declared scRAW hyperparameters in a JSON-friendly structure."""
     from .algorithms.scraw_algorithm import ScRAWAlgorithm
 
     out: List[Dict[str, Any]] = []
@@ -621,15 +496,7 @@ def _hyperparams_declared() -> List[Dict[str, Any]]:
 
 
 def run_once(args: argparse.Namespace) -> int:
-    """Exécute un run scRAW complet: préparation, entraînement, métriques et exports.
-    
-    
-    Args:
-        args: Paramètre d'entrée `args` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Run a full scRAW job: preprocess, train, evaluate, and export artifacts."""
     preset = get_preset(args.preset)
     data_path = Path(args.data).expanduser().resolve()
     output = Path(args.output).expanduser().resolve()
@@ -1324,15 +1191,7 @@ def run_once(args: argparse.Namespace) -> int:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Déclare toutes les options de ligne de commande supportées par le runner.
-    
-    
-    Args:
-        Aucun argument explicite en dehors du contexte objet.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Build the CLI parser for standalone scRAW execution."""
     p = argparse.ArgumentParser(description="Standalone strict scRAW runner")
     p.add_argument("--preset", required=True, choices=sorted(PRESETS.keys()))
     p.add_argument("--data", required=True, help="Input .h5ad file")
@@ -1368,15 +1227,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Point d'entrée principal appelé lors de l'exécution du script.
-    
-    
-    Args:
-        argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """CLI entrypoint with centralized error handling and logging."""
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)

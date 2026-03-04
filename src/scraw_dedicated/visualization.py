@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualization utilities for standalone scRAW runs (SCRBenchmark parity)."""
+"""Visualization utilities for standalone scRAW runs."""
 
 from __future__ import annotations
 

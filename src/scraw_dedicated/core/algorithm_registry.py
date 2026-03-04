@@ -352,15 +352,7 @@ class BaseAlgorithm(ABC):
         
         # Helper to detect best auto device
         def get_auto_device():
-            """Réalise l'opération `get auto device` du module `algorithm_registry`.
-            
-            
-            Args:
-                Aucun argument explicite en dehors du contexte objet.
-            
-            Returns:
-                `None` ou une valeur interne selon le flux d'exécution.
-            """
+            """Return the best available device following cuda > mps > cpu."""
             if torch.cuda.is_available():
                 return 'cuda'
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
@@ -440,15 +432,7 @@ class AlgorithmRegistry:
     _algorithms: Dict[str, Type[BaseAlgorithm]] = {}
 
     def __new__(cls):
-        """Helper interne: new.
-        
-        
-        Args:
-            Aucun argument explicite en dehors du contexte objet.
-        
-        Returns:
-            `None` ou une valeur interne selon le flux d'exécution.
-        """
+        """Return the singleton instance of the registry."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance

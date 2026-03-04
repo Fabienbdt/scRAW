@@ -17,15 +17,7 @@ import numpy as np
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    """Construit et retourne le parseur d'arguments CLI pour ce script.
-    
-    
-    Args:
-        argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Parse CLI arguments for multi-seed robustness evaluation."""
     p = argparse.ArgumentParser(description="Run multi-seed robustness with scRAW dedicated presets.")
     p.add_argument("--preset", required=True, choices=["baron_best", "pancreas_best"])
     p.add_argument("--data", required=True)
@@ -45,16 +37,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 
 def _metric_value(row: Dict[str, str], key: str) -> float:
-    """Helper interne: metric value.
-    
-    
-    Args:
-        row: Paramètre d'entrée `row` utilisé dans cette étape du pipeline.
-        key: Paramètre d'entrée `key` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Read one metric from a CSV row as float (NaN on parse failure)."""
     try:
         return float(row.get(key, "nan"))
     except Exception:
@@ -62,15 +45,7 @@ def _metric_value(row: Dict[str, str], key: str) -> float:
 
 
 def _read_metrics(path: Path) -> Dict[str, float]:
-    """Helper interne: read metrics.
-    
-    
-    Args:
-        path: Paramètre d'entrée `path` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Read `analysis_results.csv` for one run directory into a metric dict."""
     metrics_path = path / "results" / "analysis_results.csv"
     if not metrics_path.exists():
         return {
@@ -113,17 +88,7 @@ def _read_metrics(path: Path) -> Dict[str, float]:
 
 
 def _build_run_cmd(args: argparse.Namespace, seed: int, run_output: Path) -> List[str]:
-    """Helper interne: build run cmd.
-    
-    
-    Args:
-        args: Paramètre d'entrée `args` utilisé dans cette étape du pipeline.
-        seed: Paramètre d'entrée `seed` utilisé dans cette étape du pipeline.
-        run_output: Paramètre d'entrée `run_output` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Build the CLI command for one seed run."""
     cmd = [
         sys.executable,
         "-m",
@@ -159,15 +124,7 @@ def _build_run_cmd(args: argparse.Namespace, seed: int, run_output: Path) -> Lis
 
 
 def _subprocess_env() -> Dict[str, str]:
-    """Helper interne: subprocess env.
-    
-    
-    Args:
-        Aucun argument explicite en dehors du contexte objet.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Build subprocess environment with local `src` on `PYTHONPATH`."""
     env = os.environ.copy()
     src_dir = Path(__file__).resolve().parents[1]
     prev = env.get("PYTHONPATH", "")
@@ -176,15 +133,7 @@ def _subprocess_env() -> Dict[str, str]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Point d'entrée principal appelé lors de l'exécution du script.
-    
-    
-    Args:
-        argv: Paramètre d'entrée `argv` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Entry point: execute runs for each seed and aggregate robustness stats."""
     args = parse_args(argv)
     seeds = [int(x.strip()) for x in args.seeds.split(",") if x.strip()]
     if not seeds:

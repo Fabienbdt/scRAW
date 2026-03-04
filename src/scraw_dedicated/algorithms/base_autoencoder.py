@@ -18,44 +18,26 @@ class _GradientReversalFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx: Any, x: torch.Tensor, lambda_: torch.Tensor) -> torch.Tensor:
-        """Réalise l'opération `forward` du module `base_autoencoder`.
-                
-        Args:
-            ctx: Paramètre d'entrée `ctx` utilisé dans cette étape du pipeline.
-            x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
-            lambda_: Paramètre d'entrée `lambda_` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
+        """Forward pass of gradient reversal.
+
+        The tensor is returned unchanged, while `lambda_` is cached in the
+        autograd context to scale and invert gradients during backward.
         """
         ctx.lambda_ = float(lambda_.item())
         return x.clone()
 
     @staticmethod
     def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
-        """Réalise l'opération `backward` du module `base_autoencoder`.
-        
-        
-        Args:
-            ctx: Paramètre d'entrée `ctx` utilisé dans cette étape du pipeline.
-            grad_output: Paramètre d'entrée `grad_output` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
+        """Backward pass of gradient reversal.
+
+        The gradient is multiplied by `-lambda_` so the upstream branch learns
+        representations that confuse the adversarial head.
         """
         return -ctx.lambda_ * grad_output, None
 
 
 def gradient_reversal(x: torch.Tensor, lambda_: float = 1.0) -> torch.Tensor:
-    """Réalise l'opération `gradient reversal` du module `base_autoencoder`.
-        
-    Args:
-        x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
-        lambda_: Paramètre d'entrée `lambda_` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
+    """Apply gradient reversal to `x` with scale `lambda_`."""
     # On passe explicitement lambda sur le bon device pour éviter les mismatch CPU/GPU.
     lam = torch.tensor(float(lambda_), dtype=torch.float32, device=x.device)
     return _GradientReversalFunction.apply(x, lam)
@@ -72,15 +54,11 @@ class MLPAutoencoder(nn.Module):
     """Simple MLP autoencoder used by scRAW."""
 
     def __init__(self, shape: NetworkShape, dropout: float = 0.1) -> None:
-        """Helper interne: init.
-        
-        
+        """Build a symmetric MLP autoencoder from the requested architecture.
+
         Args:
-            shape: Paramètre d'entrée `shape` utilisé dans cette étape du pipeline.
-            dropout: Paramètre d'entrée `dropout` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
+            shape: Network dimensions (input, hidden stack, latent size).
+            dropout: Dropout applied after each hidden block.
         """
         super().__init__()
         # Construction de l'encodeur: réduction progressive vers l'espace latent.
@@ -103,13 +81,11 @@ class MLPAutoencoder(nn.Module):
         self.decoder = nn.Sequential(*dec)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Réalise l'opération `forward` du module `base_autoencoder`.
-        
-        Args:
-            x: Paramètre d'entrée `x` utilisé dans cette étape du pipeline.
-        
+        """Encode then decode an input batch.
+
         Returns:
-            Valeur calculée par la fonction.
+            Tuple `(z, recon)` where `z` is the latent embedding and `recon`
+            is the reconstruction in feature space.
         """
         z = self.encoder(x)
         recon = self.decoder(z)
@@ -117,13 +93,10 @@ class MLPAutoencoder(nn.Module):
 
 
 def parse_hidden_layers(raw: Any) -> List[int]:
-    """Réalise l'opération `parse hidden layers` du module `base_autoencoder`.
-        
-    Args:
-        raw: Paramètre d'entrée `raw` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
+    """Parse hidden-layer configuration from list/tuple or comma string.
+
+    Invalid/empty values are ignored and the default `[512, 256, 128]` is
+    returned when no valid positive layer size is provided.
     """
     # Accepte soit une liste Python, soit une chaîne "512,256,128".
     if isinstance(raw, (list, tuple)):
@@ -154,15 +127,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
 
     @classmethod
     def get_info(cls) -> AlgorithmInfo:
-        """Réalise l'opération `get info` du module `base_autoencoder`.
-        
-        
-        Args:
-            Aucun argument explicite en dehors du contexte objet.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Return static metadata for the base autoencoder algorithm."""
         return AlgorithmInfo(
             name="base_autoencoder",
             display_name="Base AE",
@@ -177,15 +142,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
 
     @classmethod
     def get_hyperparameters(cls) -> List[HyperparameterConfig]:
-        """Réalise l'opération `get hyperparameters` du module `base_autoencoder`.
-        
-        
-        Args:
-            Aucun argument explicite en dehors du contexte objet.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Return shared network/training hyperparameters for descendants."""
         return [
             HyperparameterConfig(
                 name="hidden_layers",
@@ -258,27 +215,12 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         ]
 
     def __init__(self, params: Optional[Dict[str, Any]] = None) -> None:
-        """Helper interne: init.
-        
-        
-        Args:
-            params: Paramètre d'entrée `params` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Initialize the base algorithm container and model placeholder."""
         super().__init__(params=params)
         self.model: Optional[MLPAutoencoder] = None
 
     def _as_numpy_matrix(self, data: Any) -> np.ndarray:
-        """Helper interne: as numpy matrix.
-        
-        Args:
-            data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Convert supported input containers to a dense `float32` 2D matrix."""
         # Supporte AnnData (data.X) ou matrice numpy directe.
         X = data.X if hasattr(data, "X") else data
         if hasattr(X, "toarray"):
@@ -289,14 +231,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         return X
 
     def _build_model(self, input_dim: int) -> MLPAutoencoder:
-        """Helper interne: build model.
-        
-        Args:
-            input_dim: Paramètre d'entrée `input_dim` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Instantiate and store the MLP autoencoder from current parameters."""
         # Lit les hyperparamètres réseau puis instancie l'autoencodeur MLP.
         shape = NetworkShape(
             input_dim=int(input_dim),
@@ -308,15 +243,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         return model
 
     def _encode_numpy(self, X: np.ndarray, batch_size: int = 2048) -> np.ndarray:
-        """Helper interne: encode numpy.
-        
-        Args:
-            X: Paramètre d'entrée `X` utilisé dans cette étape du pipeline.
-            batch_size: Paramètre d'entrée `batch_size` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Encode a full matrix into latent space using mini-batches."""
         if self.model is None:
             raise RuntimeError("Model is not initialized.")
         device = torch.device(self.get_device())
@@ -344,54 +271,22 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         return out
 
     def fit(self, data: Any, labels: Optional[Any] = None) -> "BaseAutoencoderAlgorithm":
-        """Entraîne le modèle sur les données fournies.
-        
-        Args:
-            data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
-            labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Abstract training entrypoint implemented by concrete algorithms."""
         raise NotImplementedError("Use ScRAWAlgorithm for training.")
 
     def predict(self, data: Any = None) -> Any:
-        """Retourne les clusters prédits après entraînement.
-        
-        
-        Args:
-            data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Return predicted labels once the algorithm has been fitted."""
         if not self._fitted:
             raise RuntimeError("Algorithm not fitted.")
         return self._labels
 
     def encode(self, data: Any) -> np.ndarray:
-        """Projette les données dans l'espace latent appris par l'encodeur.
-        
-        
-        Args:
-            data: Paramètre d'entrée `data` utilisé dans cette étape du pipeline.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Project input data into the latent space of the trained encoder."""
         X = self._as_numpy_matrix(data)
         return self._encode_numpy(X)
 
     def get_num_parameters(self) -> Optional[int]:
-        """Réalise l'opération `get num parameters` du module `base_autoencoder`.
-        
-        
-        Args:
-            Aucun argument explicite en dehors du contexte objet.
-        
-        Returns:
-            Valeur calculée par la fonction.
-        """
+        """Return the number of trainable parameters, or `None` if unbuilt."""
         if self.model is None:
             return None
         return int(sum(p.numel() for p in self.model.parameters() if p.requires_grad))
