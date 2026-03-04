@@ -118,6 +118,8 @@ PRESETS: Dict[str, ScrawPreset] = {
             {
                 "epochs": 120,
                 "warmup_epochs": 30,
+                "dropout": 0.1,
+                "dynamic_weight_momentum": 0.7,
                 "nb_input_transform": "log1p",
                 "rare_triplet_weight": 0.1,
                 "rare_triplet_start_epoch": 35,

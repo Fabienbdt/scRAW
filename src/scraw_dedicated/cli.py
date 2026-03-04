@@ -360,6 +360,235 @@ def _extract_final_cell_weights(snapshots: List[Dict[str, Any]], n_cells: int) -
     return None
 
 
+def _extract_final_weight_component(
+    snapshots: List[Dict[str, Any]],
+    n_cells: int,
+    key: str,
+) -> Optional[np.ndarray]:
+    """Return last valid per-cell weight component from snapshots."""
+    for snap in reversed(snapshots):
+        vals = snap.get(key)
+        if vals is None:
+            continue
+        arr = np.asarray(vals, dtype=np.float32)
+        if len(arr) == n_cells:
+            return arr
+    return None
+
+
+def _snapshot_epoch(snap: Dict[str, Any]) -> Optional[int]:
+    """Parse snapshot epoch as int."""
+    try:
+        return int(snap.get("epoch"))
+    except Exception:
+        return None
+
+
+def _select_snapshots_for_requested_epochs(
+    snapshots: List[Dict[str, Any]],
+    warmup_epochs: int,
+    step: int = 10,
+) -> List[Dict[str, Any]]:
+    """Select snapshots: epoch 0 pre-backward, epoch warmup-1, then every `step` epochs."""
+    valid = [s for s in snapshots if s.get("embeddings") is not None]
+    if not valid:
+        return []
+
+    pre0 = next((s for s in valid if str(s.get("snapshot_type", "")) == "pre_backward"), None)
+    by_epoch: Dict[int, Dict[str, Any]] = {}
+    for s in valid:
+        e = _snapshot_epoch(s)
+        if e is None:
+            continue
+        if e not in by_epoch:
+            by_epoch[e] = s
+
+    max_epoch = max(by_epoch.keys()) if by_epoch else 0
+    anchor = int(max(0, warmup_epochs - 1))
+    anchor = min(anchor, max_epoch)
+    target_epochs = [anchor]
+    e = anchor + int(max(1, step))
+    while e <= max_epoch:
+        target_epochs.append(e)
+        e += int(max(1, step))
+    if max_epoch not in target_epochs:
+        target_epochs.append(max_epoch)
+
+    out: List[Dict[str, Any]] = []
+    if pre0 is not None:
+        out.append(pre0)
+    for te in target_epochs:
+        s = by_epoch.get(int(te))
+        if s is not None and s not in out:
+            out.append(s)
+    if not out:
+        out = [by_epoch[e] for e in sorted(by_epoch.keys())]
+    return out
+
+
+def _snapshot_component_vector(snapshot: Dict[str, Any], key: str) -> Optional[np.ndarray]:
+    """Read one component vector from a snapshot."""
+    vals = snapshot.get(key)
+    if vals is None:
+        return None
+    arr = np.asarray(vals, dtype=np.float32)
+    if arr.ndim != 1 or arr.shape[0] == 0:
+        return None
+    return arr
+
+
+def _lagged_component_vectors(
+    snapshots: List[Dict[str, Any]],
+    key: str,
+    lag: int,
+    phase2_start_epoch: int,
+) -> List[Optional[np.ndarray]]:
+    """Build per-snapshot lagged vectors (epoch n-`lag`) for epoch n projections."""
+    by_epoch: Dict[int, Dict[str, Any]] = {}
+    for s in snapshots:
+        e = _snapshot_epoch(s)
+        if e is None:
+            continue
+        by_epoch[e] = s
+
+    out: List[Optional[np.ndarray]] = []
+    for s in snapshots:
+        e = _snapshot_epoch(s)
+        if e is None or e < int(phase2_start_epoch):
+            out.append(None)
+            continue
+        prev = by_epoch.get(int(e - lag))
+        if prev is None:
+            out.append(None)
+            continue
+        out.append(_snapshot_component_vector(prev, key))
+    return out
+
+
+def _leiden_optimized_for_target_clusters(
+    embeddings: np.ndarray,
+    seed: int,
+    target_clusters: int = 14,
+    labels_true: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Run Leiden resolution search targeting `target_clusters` and maximizing ARI when available."""
+    import anndata as ad
+    import scanpy as sc
+    from sklearn.metrics import adjusted_rand_score
+
+    emb = np.asarray(embeddings, dtype=np.float32)
+    n_cells = int(emb.shape[0])
+    if n_cells < 3:
+        labels = np.zeros(n_cells, dtype=np.int64)
+        return labels, {"resolution": 0.0, "n_clusters": 1, "target_clusters": int(target_clusters)}
+
+    adata = ad.AnnData(X=emb)
+    n_neighbors = max(2, min(15, n_cells - 1))
+    sc.pp.neighbors(
+        adata,
+        n_neighbors=n_neighbors,
+        use_rep="X",
+        method="gauss",
+        transformer="sklearn",
+        random_state=int(seed),
+    )
+
+    true_arr = None if labels_true is None else np.asarray(labels_true, dtype=object)
+    has_truth = true_arr is not None and len(true_arr) == n_cells
+
+    candidates: List[Dict[str, Any]] = []
+    for res in np.arange(0.05, 3.01, 0.05):
+        sc.tl.leiden(adata, resolution=float(res), random_state=int(seed), key_added="_leiden_tmp")
+        labels = adata.obs["_leiden_tmp"].astype(int).to_numpy(dtype=np.int64, copy=False)
+        n_found = int(len(np.unique(labels)))
+        ari = float("nan")
+        if has_truth:
+            try:
+                ari = float(adjusted_rand_score(true_arr, labels))
+            except Exception:
+                ari = float("nan")
+        candidates.append(
+            {
+                "resolution": float(res),
+                "labels": labels.copy(),
+                "n_clusters": n_found,
+                "diff": abs(n_found - int(target_clusters)),
+                "ari": ari,
+            }
+        )
+
+    if not candidates:
+        labels = np.zeros(n_cells, dtype=np.int64)
+        return labels, {"resolution": 0.0, "n_clusters": 1, "target_clusters": int(target_clusters)}
+
+    exact = [c for c in candidates if c["n_clusters"] == int(target_clusters)]
+    if has_truth and exact:
+        finite_exact = [c for c in exact if np.isfinite(float(c["ari"]))]
+        if finite_exact:
+            best = sorted(finite_exact, key=lambda c: (-float(c["ari"]), float(c["resolution"])))[0]
+        else:
+            best = sorted(exact, key=lambda c: float(c["resolution"]))[0]
+    else:
+        pool = exact if exact else candidates
+        if has_truth:
+            best = sorted(
+                pool,
+                key=lambda c: (int(c["diff"]), -float(c["ari"]) if np.isfinite(c["ari"]) else 1e9, float(c["resolution"])),
+            )[0]
+        else:
+            best = sorted(pool, key=lambda c: (int(c["diff"]), float(c["resolution"])))[0]
+
+    info = {
+        "resolution": float(best["resolution"]),
+        "n_clusters": int(best["n_clusters"]),
+        "target_clusters": int(target_clusters),
+        "ARI_proxy": float(best["ari"]) if np.isfinite(float(best["ari"])) else None,
+    }
+    return np.asarray(best["labels"], dtype=np.int64), info
+
+
+def _metric_row_from_bundle(
+    epoch: int,
+    method: str,
+    metrics: Dict[str, Any],
+    n_clusters: int,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Normalize one metric row for CSV/plots."""
+    row: Dict[str, Any] = {
+        "epoch": int(epoch),
+        "method": str(method),
+        "NMI": metrics.get("NMI"),
+        "ARI": metrics.get("ARI"),
+        "ACC": metrics.get("ACC"),
+        "BalancedACC": metrics.get("BalancedACC"),
+        "F1_Macro": metrics.get("F1_Macro"),
+        "RareACC": metrics.get("RareACC"),
+        "n_clusters_found": int(n_clusters),
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+
+def _write_rows_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
+    """Write a list of dict rows to CSV."""
+    if not rows:
+        return
+    fields: List[str] = []
+    seen = set()
+    for row in rows:
+        for k in row.keys():
+            if k not in seen:
+                seen.add(k)
+                fields.append(str(k))
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: _as_jsonable(v) for k, v in row.items()})
+
+
 def _hyperparams_declared() -> List[Dict[str, Any]]:
     """Expose la liste des hyperparamètres déclarés par l'algorithme scRAW.
     
@@ -424,17 +653,51 @@ def run_once(args: argparse.Namespace) -> int:
         snapshot_interval=args.snapshot_interval,
         param_overrides=param_overrides,
     )
+    if not args.metrics_only and args.capture_snapshots == "auto":
+        # Figures epoch-wise require latent snapshots (enabled by default when plotting).
+        scraw_params["capture_embedding_snapshots"] = True
+        scraw_params.setdefault("snapshot_interval_epochs", 10)
 
     output.mkdir(parents=True, exist_ok=True)
     config_dir = output / "config"
     data_dir = output / "data"
     figures_dir = output / "figures"
+    fig_umap_dir = figures_dir / "umaps"
+    fig_umap_overview_dir = fig_umap_dir / "overview"
+    fig_umap_labels_dir = fig_umap_dir / "labels"
+    fig_umap_batch_dir = fig_umap_dir / "batch"
+    fig_umap_weights_dir = fig_umap_dir / "weights"
+    fig_umap_weights_cluster_dir = fig_umap_weights_dir / "cluster_component"
+    fig_umap_weights_density_dir = fig_umap_weights_dir / "density_component"
+    fig_umap_weights_fused_dir = fig_umap_weights_dir / "fused_weight"
+    fig_loss_dir = figures_dir / "loss"
+    fig_metrics_dir = figures_dir / "metrics"
     results_dir = output / "results"
+    clustering_dir = results_dir / "clustering_final"
+    epoch_metrics_dir = results_dir / "epoch_metrics"
     labels_dir = results_dir / "labels"
     loss_dir = results_dir / "loss_history"
     save_processed_data = str(getattr(args, "save_processed_data", "off")).lower() == "on"
 
-    for p in (config_dir, figures_dir, results_dir, labels_dir, loss_dir):
+    for p in (
+        config_dir,
+        figures_dir,
+        fig_umap_dir,
+        fig_umap_overview_dir,
+        fig_umap_labels_dir,
+        fig_umap_batch_dir,
+        fig_umap_weights_dir,
+        fig_umap_weights_cluster_dir,
+        fig_umap_weights_density_dir,
+        fig_umap_weights_fused_dir,
+        fig_loss_dir,
+        fig_metrics_dir,
+        results_dir,
+        clustering_dir,
+        epoch_metrics_dir,
+        labels_dir,
+        loss_dir,
+    ):
         p.mkdir(parents=True, exist_ok=True)
     if save_processed_data:
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -462,10 +725,14 @@ def run_once(args: argparse.Namespace) -> int:
     from .algorithms.scraw_algorithm import ScRAWAlgorithm
     from .visualization import (
         plot_loss_curves,
+        plot_loss_curves_timeline,
         plot_marker_overlap_heatmap,
         plot_umap_batch,
         plot_umap_comparison,
         plot_umap_evolution,
+        plot_umap_snapshots_categorical_panels,
+        plot_umap_snapshots_gradient_panels,
+        plot_metric_evolution_curves,
         plot_umap_weighted,
         plot_umap_weighted_gradient,
     )
@@ -513,6 +780,139 @@ def run_once(args: argparse.Namespace) -> int:
     num_params = algo.get_num_parameters()
 
     metrics = compute_metrics(true_labels_raw, pred_labels, embeddings=embeddings)
+
+    warmup_epochs_eff = int(
+        effective_params.get(
+            "warmup_epochs",
+            scraw_params.get("warmup_epochs", 30),
+        )
+        or 30
+    )
+    epochs_eff = int(effective_params.get("epochs", scraw_params.get("epochs", 120)) or 120)
+    final_epoch = max(0, epochs_eff - 1)
+
+    selected_snapshots = _select_snapshots_for_requested_epochs(
+        snapshots=snapshots,
+        warmup_epochs=warmup_epochs_eff,
+        step=10,
+    )
+
+    epoch_metric_rows: List[Dict[str, Any]] = []
+    if selected_snapshots and true_labels_raw is not None:
+        for snap in selected_snapshots:
+            epoch_idx = _snapshot_epoch(snap)
+            emb_snap = snap.get("embeddings")
+            if epoch_idx is None or emb_snap is None:
+                continue
+            emb_arr = np.asarray(emb_snap, dtype=np.float32)
+            if emb_arr.ndim != 2 or emb_arr.shape[0] != len(true_labels_raw):
+                continue
+            try:
+                labels_h = algo._hdbscan_clustering(emb_arr)
+                m_h = compute_metrics(true_labels_raw, labels_h, embeddings=emb_arr)
+                epoch_metric_rows.append(
+                    _metric_row_from_bundle(
+                        epoch=epoch_idx,
+                        method="hdbscan",
+                        metrics=m_h,
+                        n_clusters=int(len(np.unique(labels_h))),
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Epoch metric (HDBSCAN) failed at epoch %s: %s", epoch_idx, exc)
+
+            try:
+                labels_l, l_info = _leiden_optimized_for_target_clusters(
+                    embeddings=emb_arr,
+                    seed=args.seed,
+                    target_clusters=14,
+                    labels_true=true_labels_raw,
+                )
+                m_l = compute_metrics(true_labels_raw, labels_l, embeddings=emb_arr)
+                epoch_metric_rows.append(
+                    _metric_row_from_bundle(
+                        epoch=epoch_idx,
+                        method="leiden_target14",
+                        metrics=m_l,
+                        n_clusters=int(l_info.get("n_clusters", len(np.unique(labels_l)))),
+                        extra={"resolution": l_info.get("resolution")},
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Epoch metric (Leiden target14) failed at epoch %s: %s", epoch_idx, exc)
+
+    if epoch_metric_rows:
+        _write_rows_csv(epoch_metrics_dir / "metrics_by_epoch.csv", epoch_metric_rows)
+        _save_json(
+            epoch_metrics_dir / "metrics_by_epoch.json",
+            {
+                "n_rows": len(epoch_metric_rows),
+                "methods": sorted({str(r.get("method")) for r in epoch_metric_rows}),
+                "rows": epoch_metric_rows,
+            },
+        )
+
+    final_clustering_rows: List[Dict[str, Any]] = []
+    final_clustering_rows.append(
+        _metric_row_from_bundle(
+            epoch=final_epoch,
+            method="hdbscan_final",
+            metrics=metrics,
+            n_clusters=int(len(np.unique(pred_labels))),
+            extra={"resolution": None},
+        )
+    )
+
+    leiden_final_labels: Optional[np.ndarray] = None
+    leiden_final_metrics: Optional[Dict[str, Any]] = None
+    leiden_final_info: Dict[str, Any] = {}
+    if embeddings is not None and len(embeddings) == len(pred_labels):
+        try:
+            leiden_final_labels, leiden_final_info = _leiden_optimized_for_target_clusters(
+                embeddings=embeddings,
+                seed=args.seed,
+                target_clusters=14,
+                labels_true=true_labels_raw,
+            )
+            leiden_final_metrics = compute_metrics(true_labels_raw, leiden_final_labels, embeddings=embeddings)
+            final_clustering_rows.append(
+                _metric_row_from_bundle(
+                    epoch=final_epoch,
+                    method="leiden_target14_final",
+                    metrics=leiden_final_metrics,
+                    n_clusters=int(leiden_final_info.get("n_clusters", len(np.unique(leiden_final_labels)))),
+                    extra={"resolution": leiden_final_info.get("resolution")},
+                )
+            )
+        except Exception as exc:
+            logger.warning("Final Leiden target14 clustering failed: %s", exc)
+
+    _write_rows_csv(clustering_dir / "final_clustering_comparison.csv", final_clustering_rows)
+    _save_json(
+        clustering_dir / "final_clustering_comparison.json",
+        {
+            "final_epoch": final_epoch,
+            "rows": final_clustering_rows,
+            "leiden_target14_info": leiden_final_info,
+        },
+    )
+
+    # Save labels for reproducible post-hoc diagnostics.
+    labels_compare_payload: Dict[str, List[str]] = {
+        "hdbscan_final": [str(x) for x in np.asarray(pred_labels)],
+    }
+    if leiden_final_labels is not None:
+        labels_compare_payload["leiden_target14_final"] = [
+            str(x) for x in np.asarray(leiden_final_labels)
+        ]
+    if true_labels_raw is not None and len(true_labels_raw) == len(pred_labels):
+        labels_compare_payload["true_label"] = [str(x) for x in np.asarray(true_labels_raw)]
+    with (clustering_dir / "final_clustering_labels.csv").open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(labels_compare_payload.keys()))
+        writer.writeheader()
+        rows = zip(*[labels_compare_payload[k] for k in labels_compare_payload.keys()])
+        for vals in rows:
+            writer.writerow({k: v for k, v in zip(labels_compare_payload.keys(), vals)})
 
     result_row: Dict[str, Any] = {
         "algorithm": "scraw",
@@ -584,6 +984,7 @@ def run_once(args: argparse.Namespace) -> int:
                     "params": effective_params,
                     "num_parameters": num_params,
                     "embeddings_shape": list(embeddings.shape) if embeddings is not None else None,
+                    "final_clustering_comparison": final_clustering_rows,
                 }
             ],
             "summary": {
@@ -679,6 +1080,11 @@ def run_once(args: argparse.Namespace) -> int:
             "z_dim": effective_params.get("z_dim", "?"),
         }
         dataset_info = f"{data_path.stem} | Full data"
+        batch_labels: Optional[np.ndarray] = None
+        if batch_key is not None and batch_key in adata_proc.obs.columns:
+            tmp_batch = adata_proc.obs[batch_key].astype(str).to_numpy()
+            if len(tmp_batch) == len(pred_labels):
+                batch_labels = np.asarray(tmp_batch, dtype=object)
 
         if true_labels_raw is not None and len(true_labels_raw) == len(pred_labels):
             fig = plot_umap_comparison(
@@ -690,7 +1096,11 @@ def run_once(args: argparse.Namespace) -> int:
                 params_info=params_info,
                 dataset_info=dataset_info,
             )
-            fig.savefig(figures_dir / "umap_comparison_scraw.png", bbox_inches="tight", dpi=150)
+            fig.savefig(
+                fig_umap_overview_dir / "umap_comparison_scraw.png",
+                bbox_inches="tight",
+                dpi=150,
+            )
             plt.close(fig)
 
             try:
@@ -706,7 +1116,11 @@ def run_once(args: argparse.Namespace) -> int:
                     algorithm_name="scraw",
                 )
                 if fig_hm is not None:
-                    fig_hm.savefig(figures_dir / "marker_overlap_heatmap_scraw.png", bbox_inches="tight", dpi=150)
+                    fig_hm.savefig(
+                        fig_umap_overview_dir / "marker_overlap_heatmap_scraw.png",
+                        bbox_inches="tight",
+                        dpi=150,
+                    )
                     plt.close(fig_hm)
 
                 import pandas as pd
@@ -724,18 +1138,20 @@ def run_once(args: argparse.Namespace) -> int:
             except Exception as exc:
                 logger.warning("Marker-overlap annotation failed for scraw: %s", exc)
 
-        if batch_key is not None and batch_key in adata_proc.obs.columns:
-            batch_labels = adata_proc.obs[batch_key].astype(str).to_numpy()
-            if len(batch_labels) == len(pred_labels):
-                fig_b = plot_umap_batch(
-                    embeddings=embeddings,
-                    batch_labels=batch_labels,
-                    title=f"scraw (Batch: {batch_key})",
-                    params_info=params_info,
-                    dataset_info=dataset_info,
-                )
-                fig_b.savefig(figures_dir / "umap_batch_scraw.png", bbox_inches="tight", dpi=150)
-                plt.close(fig_b)
+        if batch_labels is not None:
+            fig_b = plot_umap_batch(
+                embeddings=embeddings,
+                batch_labels=batch_labels,
+                title=f"scraw (Batch: {batch_key})",
+                params_info=params_info,
+                dataset_info=dataset_info,
+            )
+            fig_b.savefig(
+                fig_umap_overview_dir / "umap_batch_scraw.png",
+                bbox_inches="tight",
+                dpi=150,
+            )
+            plt.close(fig_b)
 
         weights = _extract_final_cell_weights(snapshots, n_cells=len(pred_labels))
         if weights is not None:
@@ -749,7 +1165,11 @@ def run_once(args: argparse.Namespace) -> int:
                 params_info=params_info,
                 dataset_info=dataset_info,
             )
-            fig_w.savefig(figures_dir / "umap_scraw_weighted.png", bbox_inches="tight", dpi=150)
+            fig_w.savefig(
+                fig_umap_weights_fused_dir / "umap_scraw_weighted_alpha.png",
+                bbox_inches="tight",
+                dpi=150,
+            )
             plt.close(fig_w)
 
             fig_wg = plot_umap_weighted_gradient(
@@ -759,26 +1179,131 @@ def run_once(args: argparse.Namespace) -> int:
                 params_info=params_info,
                 dataset_info=dataset_info,
             )
-            fig_wg.savefig(figures_dir / "umap_scraw_weighted_gradient.png", bbox_inches="tight", dpi=150)
+            fig_wg.savefig(
+                fig_umap_weights_fused_dir / "umap_scraw_weighted_gradient_final.png",
+                bbox_inches="tight",
+                dpi=150,
+            )
             plt.close(fig_wg)
 
-        if snapshots:
+        if selected_snapshots:
+            labels_for_panels = true_labels_raw if true_labels_raw is not None else pred_labels
+            fig_labels_panel = plot_umap_snapshots_categorical_panels(
+                embedding_snapshots=selected_snapshots,
+                labels=np.asarray(labels_for_panels),
+                title="UMAP snapshots (labels) - epoch 0 pre-backward, epoch 29, then every 10 epochs",
+                point_size=3,
+                random_state=args.seed,
+                params_info=params_info,
+                dataset_info=dataset_info,
+            )
+            if fig_labels_panel is not None:
+                fig_labels_panel.savefig(
+                    fig_umap_labels_dir / "umap_labels_snapshots_panels.png",
+                    bbox_inches="tight",
+                    dpi=150,
+                )
+                plt.close(fig_labels_panel)
+
+            if batch_labels is not None:
+                fig_batch_panel = plot_umap_snapshots_categorical_panels(
+                    embedding_snapshots=selected_snapshots,
+                    labels=np.asarray(batch_labels),
+                    title=f"UMAP snapshots (batch={batch_key}) - epoch 0 pre-backward, epoch 29, then every 10 epochs",
+                    point_size=3,
+                    random_state=args.seed,
+                    params_info=params_info,
+                    dataset_info=dataset_info,
+                )
+                if fig_batch_panel is not None:
+                    fig_batch_panel.savefig(
+                        fig_umap_batch_dir / "umap_batch_snapshots_panels.png",
+                        bbox_inches="tight",
+                        dpi=150,
+                    )
+                    plt.close(fig_batch_panel)
+
+            component_specs = [
+                ("cluster_component_weights", "Cluster Component", fig_umap_weights_cluster_dir),
+                ("density_component_weights", "Density Component", fig_umap_weights_density_dir),
+                ("cell_weights", "Fused Reconstruction Weight (Cluster + Density)", fig_umap_weights_fused_dir),
+            ]
+            for comp_key, comp_name, comp_dir in component_specs:
+                current_vectors = [
+                    _snapshot_component_vector(s, comp_key) for s in selected_snapshots
+                ]
+                lag_vectors = _lagged_component_vectors(
+                    snapshots=selected_snapshots,
+                    key=comp_key,
+                    lag=10,
+                    phase2_start_epoch=warmup_epochs_eff,
+                )
+                fig_comp = plot_umap_snapshots_gradient_panels(
+                    embedding_snapshots=selected_snapshots,
+                    current_weights=current_vectors,
+                    lagged_weights=lag_vectors,
+                    title=f"UMAP snapshots ({comp_name})",
+                    point_size=3,
+                    random_state=args.seed,
+                    current_row_label="Current epoch n weights",
+                    lagged_row_label="Lagged epoch n-10 weights on epoch n latent",
+                    params_info=params_info,
+                    dataset_info=dataset_info,
+                )
+                if fig_comp is not None:
+                    out_name = comp_key.replace("_weights", "").replace("_", "-")
+                    fig_comp.savefig(
+                        comp_dir / f"umap_gradient_panels_{out_name}.png",
+                        bbox_inches="tight",
+                        dpi=150,
+                    )
+                    plt.close(fig_comp)
+
             labels_for_evo = true_labels_raw if true_labels_raw is not None else pred_labels
             fig_evo = plot_umap_evolution(
-                embedding_snapshots=snapshots,
+                embedding_snapshots=selected_snapshots,
                 labels=labels_for_evo,
                 algorithm_name="scraw",
                 params_info=params_info,
                 dataset_info=dataset_info,
             )
             if fig_evo is not None:
-                fig_evo.savefig(figures_dir / "umap_evolution_scraw_run0.png", bbox_inches="tight", dpi=150)
+                fig_evo.savefig(
+                    fig_umap_overview_dir / "umap_evolution_scraw_run0.png",
+                    bbox_inches="tight",
+                    dpi=150,
+                )
                 plt.close(fig_evo)
 
         fig_loss = plot_loss_curves(loss_history, algorithm_name="scraw")
         if fig_loss is not None:
-            fig_loss.savefig(figures_dir / "loss_curves_scraw_run0.png", bbox_inches="tight", dpi=150)
+            fig_loss.savefig(
+                fig_loss_dir / "loss_curves_by_phase_scraw_run0.png",
+                bbox_inches="tight",
+                dpi=150,
+            )
             plt.close(fig_loss)
+
+        fig_loss_timeline = plot_loss_curves_timeline(loss_history, algorithm_name="scraw")
+        if fig_loss_timeline is not None:
+            fig_loss_timeline.savefig(
+                fig_loss_dir / "loss_curves_timeline_scraw_run0.png",
+                bbox_inches="tight",
+                dpi=150,
+            )
+            plt.close(fig_loss_timeline)
+
+        fig_metrics = plot_metric_evolution_curves(
+            epoch_metric_rows,
+            title="Epoch-wise Metrics (HDBSCAN vs Leiden target=14)",
+        )
+        if fig_metrics is not None:
+            fig_metrics.savefig(
+                fig_metrics_dir / "metrics_evolution_by_epoch_scraw_run0.png",
+                bbox_inches="tight",
+                dpi=150,
+            )
+            plt.close(fig_metrics)
 
     logger.info("Run completed. Output: %s", output)
     return 0

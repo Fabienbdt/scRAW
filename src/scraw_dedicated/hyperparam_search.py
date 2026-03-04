@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Comprehensive hyperparameter search runner for standalone scRAW (metrics only)."""
+"""Comprehensive hyperparameter search runner for standalone scRAW.
+
+Main search runs in metrics-only mode; optional post-search ablation can generate figures.
+"""
 
 from __future__ import annotations
 
@@ -178,7 +181,7 @@ DANN_CONTROL_SWEEP: Dict[str, Dict[str, Any]] = {
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Parse CLI args for hyperparameter search."""
     p = argparse.ArgumentParser(
-        description="Comprehensive scRAW hyperparameter search (always metrics-only)."
+        description="Comprehensive scRAW hyperparameter search (metrics-only search + optional figure-rich ablation)."
     )
     p.add_argument("--preset", required=True, choices=["baron_best", "pancreas_best"])
     p.add_argument("--data", required=True, help="Input .h5ad path")
@@ -493,6 +496,10 @@ def _build_cmd(
     data_path: Path,
     run_dir: Path,
     spec: RunSpec,
+    *,
+    metrics_only: bool = True,
+    capture_snapshots: str = "off",
+    snapshot_interval: int = 10,
 ) -> List[str]:
     """Build one scRAW CLI command."""
     cmd = [
@@ -509,10 +516,13 @@ def _build_cmd(
         str(args.seed),
         "--device",
         args.device,
-        "--metrics-only",
         "--capture-snapshots",
-        "off",
+        str(capture_snapshots),
     ]
+    if metrics_only:
+        cmd.append("--metrics-only")
+    if snapshot_interval is not None:
+        cmd.extend(["--snapshot-interval", str(int(snapshot_interval))])
     for key, value in sorted(spec.overrides.items()):
         cmd.extend(["--param", f"{key}={_as_cli_value(value)}"])
     return cmd
@@ -604,8 +614,9 @@ def _run_loss_ablation(
         "data": str(data_path),
         "seed": args.seed,
         "device": args.device,
-        "metrics_only_forced": True,
-        "capture_snapshots": "off",
+        "metrics_only_forced": False,
+        "capture_snapshots": "on",
+        "snapshot_interval_epochs": 10,
         "reference_search_run": {
             "group": best_overall.get("group"),
             "name": best_overall.get("name"),
@@ -637,12 +648,24 @@ def _run_loss_ablation(
         run_dir.mkdir(parents=True, exist_ok=True)
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = _build_cmd(args, data_path, run_dir, spec)
+        cmd = _build_cmd(
+            args,
+            data_path,
+            run_dir,
+            spec,
+            metrics_only=False,
+            capture_snapshots="on",
+            snapshot_interval=10,
+        )
         cmd_text = " ".join(shlex.quote(c) for c in cmd)
         print(f"[ABL {idx:03d}/{len(ablation_plan):03d}] {spec.group}/{spec.name}")
         print(f"  {cmd_text}")
 
-        if args.skip_existing and (run_dir / "results" / "analysis_results.csv").exists():
+        metrics_csv = run_dir / "results" / "analysis_results.csv"
+        expected_figure = (
+            run_dir / "figures" / "metrics" / "metrics_evolution_by_epoch_scraw_run0.png"
+        )
+        if args.skip_existing and metrics_csv.exists() and expected_figure.exists():
             rc = 0
             status = "existing"
         elif args.dry_run:
@@ -869,7 +892,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         run_dir.mkdir(parents=True, exist_ok=True)
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = _build_cmd(args, data_path, run_dir, spec)
+        cmd = _build_cmd(
+            args,
+            data_path,
+            run_dir,
+            spec,
+            metrics_only=True,
+            capture_snapshots="off",
+            snapshot_interval=10,
+        )
         cmd_text = " ".join(shlex.quote(c) for c in cmd)
         print(f"[{idx:03d}/{len(plan):03d}] {spec.group}/{spec.name}")
         print(f"  {cmd_text}")

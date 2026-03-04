@@ -835,6 +835,10 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         phase: str,
         embeddings: np.ndarray,
         cell_weights: np.ndarray,
+        pseudo_labels: Optional[np.ndarray] = None,
+        cluster_component_weights: Optional[np.ndarray] = None,
+        density_component_weights: Optional[np.ndarray] = None,
+        fused_weight_unclipped: Optional[np.ndarray] = None,
         snapshot_type: str = "periodic",
     ) -> None:
         """Helper interne: snapshot.
@@ -845,6 +849,10 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             phase: Paramètre d'entrée `phase` utilisé dans cette étape du pipeline.
             embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
             cell_weights: Paramètre d'entrée `cell_weights` utilisé dans cette étape du pipeline.
+            pseudo_labels: Paramètre d'entrée `pseudo_labels` utilisé dans cette étape du pipeline.
+            cluster_component_weights: Paramètre d'entrée `cluster_component_weights` utilisé dans cette étape du pipeline.
+            density_component_weights: Paramètre d'entrée `density_component_weights` utilisé dans cette étape du pipeline.
+            fused_weight_unclipped: Paramètre d'entrée `fused_weight_unclipped` utilisé dans cette étape du pipeline.
             snapshot_type: Paramètre d'entrée `snapshot_type` utilisé dans cette étape du pipeline.
         
         Returns:
@@ -858,6 +866,18 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                 "snapshot_type": str(snapshot_type),
                 "embeddings": np.asarray(embeddings, dtype=np.float32),
                 "cell_weights": np.asarray(cell_weights, dtype=np.float32),
+                "pseudo_labels": None
+                if pseudo_labels is None
+                else np.asarray(pseudo_labels, dtype=np.int64),
+                "cluster_component_weights": None
+                if cluster_component_weights is None
+                else np.asarray(cluster_component_weights, dtype=np.float32),
+                "density_component_weights": None
+                if density_component_weights is None
+                else np.asarray(density_component_weights, dtype=np.float32),
+                "fused_weight_unclipped": None
+                if fused_weight_unclipped is None
+                else np.asarray(fused_weight_unclipped, dtype=np.float32),
             }
         )
 
@@ -901,6 +921,8 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         # 1) Initialisation déterministe pour rendre le run reproductible.
         seed = int(self._param("seed", self._param("random_state", 42)))
         self._set_seed(seed)
+        self._embedding_snapshots = []
+        self._loss_history = []
 
         # 2) Chargement des matrices d'entrée et de reconstruction.
         X_proc = self._as_numpy_matrix(data)
@@ -994,9 +1016,24 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         capture = bool(self._param("capture_embedding_snapshots", False))
         snap_interval = int(self._param("snapshot_interval_epochs", 10) or 10)
         snap_interval = max(1, snap_interval)
+        snapshot_anchor = int(max(0, warmup - 1))
+        if epochs > 0:
+            snapshot_anchor = int(min(snapshot_anchor, epochs - 1))
+
+        def _should_capture_epoch(epoch_idx: int) -> bool:
+            if epoch_idx == epochs - 1:
+                return True
+            if epoch_idx == snapshot_anchor:
+                return True
+            if epoch_idx > snapshot_anchor:
+                return bool(((epoch_idx - snapshot_anchor) % snap_interval) == 0)
+            return False
 
         # Poids de reconstruction par cellule (mis à jour dans la phase weighted).
         current_weights = np.ones(n_cells, dtype=np.float32)
+        current_cluster_component = np.ones(n_cells, dtype=np.float32)
+        current_density_component = np.ones(n_cells, dtype=np.float32)
+        current_fused_unclipped = np.ones(n_cells, dtype=np.float32)
         current_pseudo = np.zeros(n_cells, dtype=np.int64)
 
         warm_hist = {
@@ -1027,6 +1064,37 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             dataset = TensorDataset(X_tensor_cpu, target_tensor_cpu, index_tensor_cpu)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
+        if capture and epochs > 0:
+            # Snapshot epoch 0 avant toute backward pass (latent primordial).
+            emb_init = self._encode_full(X)
+            pseudo_init = self._pseudo_labels(emb_init)
+            init_comp = self._combined_cell_weights_components(
+                embeddings=emb_init,
+                pseudo_labels=pseudo_init,
+            )
+            current_cluster_component = np.asarray(
+                init_comp["cluster_component"], dtype=np.float32
+            )
+            current_density_component = np.asarray(
+                init_comp["density_component"], dtype=np.float32
+            )
+            current_fused_unclipped = np.asarray(
+                init_comp["fused_weight_unclipped"], dtype=np.float32
+            )
+            current_weights = np.asarray(init_comp["fused_weight"], dtype=np.float32)
+            current_pseudo = np.asarray(pseudo_init, dtype=np.int64)
+            self._snapshot(
+                epoch=0,
+                phase="pretrain",
+                embeddings=emb_init,
+                cell_weights=current_weights,
+                pseudo_labels=current_pseudo,
+                cluster_component_weights=current_cluster_component,
+                density_component_weights=current_density_component,
+                fused_weight_unclipped=current_fused_unclipped,
+                snapshot_type="pre_backward",
+            )
+
         # 6) Boucle principale d'entraînement.
         for epoch in range(epochs):
             weighted_phase = epoch >= warmup
@@ -1037,10 +1105,22 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                 # Recalcule pseudo-labels + poids globaux à intervalle régulier.
                 emb_for_weights = self._encode_full(X)
                 pseudo_new = self._pseudo_labels(emb_for_weights)
-                weights_new = self._combined_cell_weights(emb_for_weights, pseudo_new)
+                comp_new = self._combined_cell_weights_components(
+                    embeddings=emb_for_weights,
+                    pseudo_labels=pseudo_new,
+                )
+                weights_new = np.asarray(comp_new["fused_weight"], dtype=np.float32)
+                cluster_new = np.asarray(comp_new["cluster_component"], dtype=np.float32)
+                density_new = np.asarray(comp_new["density_component"], dtype=np.float32)
+                fused_unclipped_new = np.asarray(
+                    comp_new["fused_weight_unclipped"], dtype=np.float32
+                )
 
                 if epoch == warmup:
                     current_weights = weights_new
+                    current_cluster_component = cluster_new
+                    current_density_component = density_new
+                    current_fused_unclipped = fused_unclipped_new
                 else:
                     mixed = momentum * current_weights + (1.0 - momentum) * weights_new
                     mean_w = float(np.mean(mixed))
@@ -1051,6 +1131,29 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     if w_max < w_min:
                         w_max = w_min
                     current_weights = np.clip(mixed, w_min, w_max).astype(np.float32)
+                    cluster_mixed = (
+                        momentum * current_cluster_component + (1.0 - momentum) * cluster_new
+                    )
+                    density_mixed = (
+                        momentum * current_density_component + (1.0 - momentum) * density_new
+                    )
+                    fused_unclipped_mixed = (
+                        momentum * current_fused_unclipped + (1.0 - momentum) * fused_unclipped_new
+                    )
+                    cluster_mean = float(np.mean(cluster_mixed))
+                    density_mean = float(np.mean(density_mixed))
+                    fused_mean = float(np.mean(fused_unclipped_mixed))
+                    if np.isfinite(cluster_mean) and cluster_mean > 0.0:
+                        cluster_mixed = cluster_mixed / cluster_mean
+                    if np.isfinite(density_mean) and density_mean > 0.0:
+                        density_mixed = density_mixed / density_mean
+                    if np.isfinite(fused_mean) and fused_mean > 0.0:
+                        fused_unclipped_mixed = fused_unclipped_mixed / fused_mean
+                    current_cluster_component = np.asarray(cluster_mixed, dtype=np.float32)
+                    current_density_component = np.asarray(density_mixed, dtype=np.float32)
+                    current_fused_unclipped = np.asarray(
+                        fused_unclipped_mixed, dtype=np.float32
+                    )
                 current_pseudo = pseudo_new
 
             total_loss_sum = 0.0
@@ -1164,7 +1267,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
 
             scheduler.step()
 
-            if capture and (epoch == 0 or epoch == epochs - 1 or (epoch % snap_interval == 0)):
+            if capture and _should_capture_epoch(epoch):
                 # Snapshot périodique pour la figure d'évolution UMAP.
                 emb_snap = self._encode_full(X)
                 phase = "weighted" if weighted_phase else "warm-up"
@@ -1173,6 +1276,10 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     phase=phase,
                     embeddings=emb_snap,
                     cell_weights=current_weights,
+                    pseudo_labels=current_pseudo,
+                    cluster_component_weights=current_cluster_component,
+                    density_component_weights=current_density_component,
+                    fused_weight_unclipped=current_fused_unclipped,
                     snapshot_type="periodic",
                 )
 

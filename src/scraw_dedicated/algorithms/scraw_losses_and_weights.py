@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 
 import numpy as np
@@ -190,10 +190,24 @@ class ScrawLossWeightMixin:
 
     def _combined_cell_weights(self, embeddings: np.ndarray, pseudo_labels: np.ndarray) -> np.ndarray:
         """Fuse cluster-frequency and density-derived weights."""
+        comp = self._combined_cell_weights_components(
+            embeddings=embeddings,
+            pseudo_labels=pseudo_labels,
+        )
+        return np.asarray(comp["fused_weight"], dtype=np.float32)
+
+    def _combined_cell_weights_components(
+        self,
+        embeddings: np.ndarray,
+        pseudo_labels: np.ndarray,
+    ) -> Dict[str, np.ndarray]:
+        """Return cluster, density and fused reconstruction weights."""
         w_cluster = self._cluster_frequency_weights(pseudo_labels)
         w_density = self._density_weights(embeddings)
 
         fusion_mode = str(self._param("weight_fusion_mode", "additive")).strip().lower()
+        if fusion_mode not in {"additive", "multiplicative"}:
+            fusion_mode = "additive"
         cluster_power = float(self._param("cluster_weight_power", 1.0))
         density_power = float(self._param("density_weight_power", 1.0))
         w_min = float(self._param("min_cell_weight", 0.25))
@@ -201,24 +215,36 @@ class ScrawLossWeightMixin:
         if w_max < w_min:
             w_max = w_min
 
-        cw = np.power(np.maximum(w_cluster, 1e-8), max(0.0, cluster_power))
-        dw = np.power(np.maximum(w_density, 1e-8), max(0.0, density_power))
+        cw = np.power(np.maximum(w_cluster, 1e-8), max(0.0, cluster_power)).astype(np.float32, copy=False)
+        dw = np.power(np.maximum(w_density, 1e-8), max(0.0, density_power)).astype(np.float32, copy=False)
 
         if fusion_mode == "multiplicative":
-            w = (cw * dw).astype(np.float32)
+            cluster_component_raw = cw
+            density_component_raw = dw
+            fused_raw = (cw * dw).astype(np.float32, copy=False)
         else:
             alpha = float(np.clip(float(self._param("cluster_density_alpha", 0.6)), 0.0, 1.0))
-            # Same convention as SCRBenchmark: alpha applies to cluster weights.
-            w = (alpha * cw + (1.0 - alpha) * dw).astype(np.float32)
+            cluster_component_raw = (alpha * cw).astype(np.float32, copy=False)
+            density_component_raw = ((1.0 - alpha) * dw).astype(np.float32, copy=False)
+            fused_raw = (cluster_component_raw + density_component_raw).astype(np.float32, copy=False)
 
-        mean = float(np.nanmean(w))
-        if np.isfinite(mean) and mean > 0.0:
-            w = w / mean
+        mean_fused = float(np.nanmean(fused_raw))
+        if not np.isfinite(mean_fused) or mean_fused <= 0.0:
+            mean_fused = 1.0
+            fused_norm = np.ones_like(fused_raw, dtype=np.float32)
         else:
-            w = np.ones_like(w, dtype=np.float32)
+            fused_norm = (fused_raw / mean_fused).astype(np.float32, copy=False)
 
-        w = np.clip(w, w_min, w_max)
-        return np.asarray(w, dtype=np.float32)
+        cluster_component = (cluster_component_raw / mean_fused).astype(np.float32, copy=False)
+        density_component = (density_component_raw / mean_fused).astype(np.float32, copy=False)
+        fused_weight = np.clip(fused_norm, w_min, w_max).astype(np.float32, copy=False)
+
+        return {
+            "cluster_component": cluster_component,
+            "density_component": density_component,
+            "fused_weight_unclipped": fused_norm.astype(np.float32, copy=False),
+            "fused_weight": fused_weight,
+        }
 
     def _apply_random_mask(
         self,

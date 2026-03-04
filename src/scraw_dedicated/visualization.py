@@ -608,6 +608,453 @@ def plot_loss_curves(
     return fig
 
 
+def plot_loss_curves_timeline(
+    loss_history: List[Dict[str, Any]],
+    algorithm_name: str,
+) -> Optional[plt.Figure]:
+    """Plot one clear timeline view of losses across all phases."""
+    if not loss_history:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    palette = {
+        "train_loss": "#111111",
+        "reconstruction": "#e74c3c",
+        "triplet": "#1f77b4",
+        "batch_adv": "#2ca02c",
+    }
+
+    phase_starts: List[Tuple[int, str]] = []
+    first_train = True
+    seen_component_labels: set[str] = set()
+    used_any = False
+    for phase in loss_history:
+        phase_name = str(phase.get("name", "phase"))
+        train_loss = phase.get("train_loss", []) or []
+        epochs = phase.get("epochs", list(range(len(train_loss)))) or []
+        if len(epochs) != len(train_loss):
+            epochs = list(range(len(train_loss)))
+        if not epochs:
+            continue
+        phase_starts.append((int(epochs[0]), phase_name))
+
+        if train_loss:
+            ax.plot(
+                epochs,
+                train_loss,
+                color=palette["train_loss"],
+                linewidth=2.2,
+                label="train_loss" if first_train else None,
+            )
+            first_train = False
+            used_any = True
+
+        components = phase.get("components", {}) or {}
+        for cname in ("reconstruction", "triplet", "batch_adv"):
+            vals = components.get(cname, []) if isinstance(components, dict) else []
+            if not vals:
+                continue
+            comp_epochs = epochs[: len(vals)] if len(epochs) >= len(vals) else list(range(len(vals)))
+            ax.plot(
+                comp_epochs,
+                vals,
+                color=palette.get(cname, None),
+                linewidth=1.5,
+                alpha=0.9,
+                linestyle="--",
+                label=cname if cname not in seen_component_labels else None,
+            )
+            seen_component_labels.add(cname)
+            used_any = True
+
+    if not used_any:
+        plt.close(fig)
+        return None
+
+    for idx, (start_epoch, phase_name) in enumerate(phase_starts):
+        if idx == 0:
+            continue
+        ax.axvline(start_epoch, color="#777777", linewidth=1.0, alpha=0.5)
+        ax.text(
+            start_epoch,
+            ax.get_ylim()[1],
+            f" {phase_name}",
+            rotation=90,
+            va="top",
+            ha="left",
+            fontsize=8,
+            alpha=0.8,
+        )
+
+    handles, labels = ax.get_legend_handles_labels()
+    uniq_h: List[Any] = []
+    uniq_l: List[str] = []
+    for h, l in zip(handles, labels):
+        if not l or l in uniq_l:
+            continue
+        uniq_h.append(h)
+        uniq_l.append(l)
+    if uniq_h:
+        ax.legend(uniq_h, uniq_l, loc="upper right", fontsize=9)
+
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.set_title(f"{algorithm_name} - Loss Timeline", fontsize=13, fontweight="bold")
+    ax.grid(True, alpha=0.25)
+    plt.tight_layout()
+    return fig
+
+
+def _snapshot_title(snapshot: Dict[str, Any]) -> str:
+    """Compact snapshot title used in panel figures."""
+    epoch = snapshot.get("epoch", "?")
+    phase = str(snapshot.get("phase", ""))
+    stype = str(snapshot.get("snapshot_type", ""))
+    if stype == "pre_backward":
+        return f"Epoch {epoch} (pre-backward)"
+    if phase:
+        return f"Epoch {epoch} ({phase})"
+    return f"Epoch {epoch}"
+
+
+def plot_umap_snapshots_categorical_panels(
+    embedding_snapshots: List[Dict[str, Any]],
+    labels: np.ndarray,
+    title: str,
+    point_size: int = 3,
+    random_state: int = 42,
+    max_cols: int = 4,
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
+) -> Optional[plt.Figure]:
+    """Plot multi-panel UMAP snapshots with one categorical color mapping."""
+    from math import ceil
+
+    valid = [
+        s
+        for s in embedding_snapshots
+        if s.get("embeddings") is not None and len(np.asarray(s.get("embeddings"))) > 0
+    ]
+    if not valid:
+        return None
+
+    first_emb = np.asarray(valid[0]["embeddings"])
+    if first_emb.ndim != 2 or first_emb.shape[0] == 0:
+        return None
+    n_cells = int(first_emb.shape[0])
+    labels_arr = np.asarray(labels)
+    if len(labels_arr) != n_cells:
+        return None
+
+    umap_list, _ = _compute_shared_umap_sequence(
+        [np.asarray(s["embeddings"]) for s in valid],
+        random_state=random_state,
+    )
+    if not umap_list:
+        return None
+
+    encoded, unique_labels, _ = _encode_labels(labels_arr)
+    n_unique = len(unique_labels)
+    if n_unique <= 10:
+        cmap = plt.cm.tab10
+    elif n_unique <= 20:
+        cmap = plt.cm.tab20
+    else:
+        cmap = plt.cm.nipy_spectral
+    colors = [cmap(i / max(n_unique - 1, 1)) for i in range(n_unique)]
+
+    n_snap = len(valid)
+    n_cols = max(1, min(int(max_cols), n_snap))
+    n_rows = ceil(n_snap / n_cols)
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(4.2 * n_cols, 4.0 * n_rows),
+        squeeze=False,
+    )
+
+    legend_unique = None
+    legend_colors = None
+    for idx, (snap, emb2d) in enumerate(zip(valid, umap_list)):
+        ax = axes[idx // n_cols][idx % n_cols]
+        for lab_idx in range(n_unique):
+            mask = encoded == lab_idx
+            if not np.any(mask):
+                continue
+            ax.scatter(
+                emb2d[mask, 0],
+                emb2d[mask, 1],
+                c=[colors[lab_idx]],
+                s=float(point_size),
+                alpha=0.8,
+                linewidths=0,
+                rasterized=True,
+            )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(_snapshot_title(snap), fontsize=9, fontweight="bold")
+        if legend_unique is None and n_unique <= 20:
+            legend_unique = unique_labels
+            legend_colors = colors
+
+    for idx in range(n_snap, n_rows * n_cols):
+        axes[idx // n_cols][idx % n_cols].axis("off")
+
+    if legend_unique is not None and legend_colors is not None:
+        handles = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=legend_colors[i],
+                markersize=6,
+                label=str(legend_unique[i]),
+            )
+            for i in range(len(legend_unique))
+        ]
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            ncol=min(8, len(handles)),
+            fontsize=7,
+            bbox_to_anchor=(0.5, -0.02),
+            frameon=True,
+        )
+
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    if params_info or dataset_info:
+        _add_param_annotation(fig, params_info, dataset_info)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    return fig
+
+
+def _normalize_weights_global(weight_arrays: List[np.ndarray]) -> Tuple[float, float]:
+    """Return robust global percentile bounds for weight color normalization."""
+    vals = []
+    for arr in weight_arrays:
+        if arr is None:
+            continue
+        v = np.asarray(arr, dtype=np.float64)
+        if v.size == 0:
+            continue
+        vals.append(v[np.isfinite(v)])
+    if not vals:
+        return 0.0, 1.0
+    flat = np.concatenate(vals)
+    if flat.size == 0:
+        return 0.0, 1.0
+    lo = float(np.nanpercentile(flat, 5))
+    hi = float(np.nanpercentile(flat, 95))
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo = float(np.nanmin(flat))
+        hi = float(np.nanmax(flat))
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            return 0.0, 1.0
+    return lo, hi
+
+
+def _normalize_weights_with_bounds(values: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    """Normalize raw weights with fixed bounds to [0, 1]."""
+    v = np.asarray(values, dtype=np.float64)
+    if v.size == 0:
+        return np.asarray([], dtype=np.float64)
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return np.full(v.shape[0], 0.5, dtype=np.float64)
+    return np.clip((v - lo) / (hi - lo), 0.0, 1.0)
+
+
+def plot_umap_snapshots_gradient_panels(
+    embedding_snapshots: List[Dict[str, Any]],
+    current_weights: List[Optional[np.ndarray]],
+    title: str,
+    lagged_weights: Optional[List[Optional[np.ndarray]]] = None,
+    point_size: int = 3,
+    random_state: int = 42,
+    max_cols: int = 4,
+    current_row_label: str = "Epoch n",
+    lagged_row_label: str = "Epoch n-10 projected on epoch n latent",
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
+) -> Optional[plt.Figure]:
+    """Plot gradient UMAP panels for snapshot weights, with optional lagged row."""
+    from math import ceil
+    from matplotlib.cm import ScalarMappable
+
+    if not embedding_snapshots:
+        return None
+    n_snap = len(embedding_snapshots)
+    if len(current_weights) != n_snap:
+        return None
+    if lagged_weights is not None and len(lagged_weights) != n_snap:
+        return None
+
+    arrays = [np.asarray(s.get("embeddings")) for s in embedding_snapshots]
+    if any(a.ndim != 2 or a.shape[0] == 0 for a in arrays):
+        return None
+    umap_list, _ = _compute_shared_umap_sequence(arrays, random_state=random_state)
+    if not umap_list:
+        return None
+
+    rows = 2 if lagged_weights is not None else 1
+    n_cols = max(1, min(int(max_cols), n_snap))
+    n_rows_panels = ceil(n_snap / n_cols)
+    fig, axes = plt.subplots(
+        rows * n_rows_panels,
+        n_cols,
+        figsize=(4.2 * n_cols, 3.8 * rows * n_rows_panels),
+        squeeze=False,
+    )
+
+    bounds_lo, bounds_hi = _normalize_weights_global(
+        [w for w in current_weights if w is not None]
+        + ([w for w in lagged_weights if w is not None] if lagged_weights is not None else [])
+    )
+
+    def _plot_one(
+        ax: plt.Axes,
+        emb2d: np.ndarray,
+        w_raw: Optional[np.ndarray],
+        header: str,
+        snap: Dict[str, Any],
+    ) -> None:
+        if w_raw is None:
+            ax.text(0.5, 0.5, "N/A", ha="center", va="center", fontsize=9)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(header, fontsize=8)
+            return
+        w = np.asarray(w_raw, dtype=np.float64)
+        if w.shape[0] != emb2d.shape[0]:
+            ax.text(0.5, 0.5, "Weight size mismatch", ha="center", va="center", fontsize=8)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(header, fontsize=8)
+            return
+        w_norm = _normalize_weights_with_bounds(w, bounds_lo, bounds_hi)
+        order = np.argsort(w_norm)
+        sc = ax.scatter(
+            emb2d[order, 0],
+            emb2d[order, 1],
+            c=w_norm[order],
+            cmap="plasma",
+            vmin=0.0,
+            vmax=1.0,
+            s=float(point_size),
+            alpha=0.95,
+            linewidths=0,
+            rasterized=True,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(f"{header}\n{_snapshot_title(snap)}", fontsize=8, fontweight="bold")
+        return sc
+
+    for idx, snap in enumerate(embedding_snapshots):
+        row0 = idx // n_cols
+        col = idx % n_cols
+        sc_obj = _plot_one(
+            axes[row0][col],
+            umap_list[idx],
+            current_weights[idx],
+            current_row_label,
+            snap,
+        )
+        if lagged_weights is not None:
+            _plot_one(
+                axes[row0 + n_rows_panels][col],
+                umap_list[idx],
+                lagged_weights[idx],
+                lagged_row_label,
+                snap,
+            )
+
+    total_rows = rows * n_rows_panels
+    for idx in range(n_snap, n_rows_panels * n_cols):
+        r = idx // n_cols
+        c = idx % n_cols
+        axes[r][c].axis("off")
+        if lagged_weights is not None:
+            axes[r + n_rows_panels][c].axis("off")
+
+    sm = ScalarMappable(cmap="plasma")
+    sm.set_clim(0.0, 1.0)
+    cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), fraction=0.015, pad=0.01)
+    cbar.set_label("Normalized weight (global robust scale)", rotation=90, labelpad=10)
+
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    if params_info or dataset_info:
+        _add_param_annotation(fig, params_info, dataset_info)
+    plt.tight_layout(rect=[0, 0.02, 1, 0.95])
+    return fig
+
+
+def plot_metric_evolution_curves(
+    metric_rows: List[Dict[str, Any]],
+    title: str = "Metrics Evolution Across Epochs",
+) -> Optional[plt.Figure]:
+    """Plot epoch-wise clustering metrics (multiple methods supported)."""
+    if not metric_rows:
+        return None
+    df = pd.DataFrame(metric_rows)
+    if df.empty or "epoch" not in df.columns or "method" not in df.columns:
+        return None
+
+    metric_specs = [
+        ("ARI", "ARI"),
+        ("NMI", "NMI"),
+        ("ACC", "ACC"),
+        ("BalancedACC", "Balanced ACC"),
+        ("F1_Macro", "F1 Macro"),
+        ("RareACC", "Rare ACC"),
+    ]
+    methods = sorted(df["method"].astype(str).unique().tolist())
+    if not methods:
+        return None
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8), squeeze=False)
+    colors = ["#111111", "#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e"]
+    cmap = {m: colors[i % len(colors)] for i, m in enumerate(methods)}
+
+    for idx, (col_name, pretty_name) in enumerate(metric_specs):
+        ax = axes[idx // 3][idx % 3]
+        plotted_any = False
+        for method in methods:
+            sub = df[df["method"].astype(str) == method].copy()
+            if col_name not in sub.columns:
+                continue
+            sub = sub.sort_values("epoch")
+            ys = pd.to_numeric(sub[col_name], errors="coerce")
+            xs = pd.to_numeric(sub["epoch"], errors="coerce")
+            mask = np.isfinite(xs.to_numpy()) & np.isfinite(ys.to_numpy())
+            if not np.any(mask):
+                continue
+            ax.plot(
+                xs.to_numpy()[mask],
+                ys.to_numpy()[mask],
+                marker="o",
+                markersize=3,
+                linewidth=1.8,
+                color=cmap[method],
+                label=method,
+            )
+            plotted_any = True
+        if not plotted_any:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(pretty_name, fontweight="bold")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(pretty_name)
+        ax.grid(True, alpha=0.25)
+        ax.set_ylim(-0.02, 1.02)
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="lower center", ncol=min(4, len(labels)), fontsize=9)
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    plt.tight_layout(rect=[0, 0.04, 1, 0.95])
+    return fig
+
+
 def plot_umap_batch(
     embeddings: np.ndarray,
     batch_labels: np.ndarray,
