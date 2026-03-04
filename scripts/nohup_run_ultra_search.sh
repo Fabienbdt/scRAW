@@ -47,6 +47,7 @@ mkdir -p "${OUTPUT_ROOT}"
 CMD=(
   "env"
   "PYTHONUNBUFFERED=1"
+  "CUBLAS_WORKSPACE_CONFIG=:4096:8"
   "${PYTHON_BIN}"
   "${ROOT_DIR}/scripts/run_hyperparam_search.py"
   "--preset" "${PRESET}"
