@@ -79,12 +79,17 @@ def preprocess_adata(adata: Any, params: Dict[str, Any]) -> Any:
             except Exception as exc:
                 logger.warning("HVG selection failed (%s). Continuing without HVG subset.", exc)
 
+    # Match SCRBenchmark DataHandler behavior: explicit z-score + clipping.
     scale_max = float(params.get("scale_max_value", 10.0))
-    sc.pp.scale(adata, max_value=scale_max)
-
     X = adata.X
     if hasattr(X, "toarray"):
         X = X.toarray()
+    X = np.asarray(X, dtype=np.float32)
+    mean = np.mean(X, axis=0)
+    std = np.std(X, axis=0)
+    std[std == 0.0] = 1.0
+    X = (X - mean) / std
+    X = np.clip(X, -scale_max, scale_max)
     adata.X = np.asarray(X, dtype=np.float32)
 
     return adata

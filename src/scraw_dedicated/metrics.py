@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 NOISE_LABELS = {-1, "-1", "noise", "Noise", "NOISE", "unassigned", "Unassigned"}
+logger = logging.getLogger(__name__)
 
 
 def _to_array(values: Any) -> np.ndarray:
@@ -88,6 +90,114 @@ def align_labels(labels_true: np.ndarray, labels_pred: np.ndarray) -> np.ndarray
 
     out = np.array([mapping.get(p, f"Unmatched_{p}") for p in labels_pred], dtype=object)
     return out
+
+
+def marker_overlap_annotation(
+    adata: Any,
+    labels_true: np.ndarray,
+    labels_pred: np.ndarray,
+    n_top_genes: int = 100,
+    method: str = "wilcoxon",
+) -> Dict[str, Any]:
+    """
+    Annotate predicted clusters using marker-gene overlap with gold labels.
+
+    Returns a dict with marker labels, overlap matrix, DEG lists, and Hungarian labels.
+    """
+    import pandas as pd
+    import scanpy as sc
+
+    labels_true = np.asarray(labels_true)
+    labels_pred = np.asarray(labels_pred)
+
+    if len(labels_true) != adata.n_obs or len(labels_pred) != adata.n_obs:
+        raise ValueError(
+            f"Label lengths ({len(labels_true)}, {len(labels_pred)}) "
+            f"must match adata.n_obs ({adata.n_obs})."
+        )
+
+    def _compute_degs_per_group(adata_work: Any, labels: np.ndarray, group_name: str) -> Dict[str, list]:
+        adata_copy = adata_work.copy()
+        adata_copy.obs[group_name] = labels.astype(str)
+
+        unique_groups = sorted(adata_copy.obs[group_name].unique())
+        degs_dict: Dict[str, list] = {}
+
+        try:
+            sc.tl.rank_genes_groups(
+                adata_copy,
+                groupby=group_name,
+                method=method,
+                n_genes=n_top_genes,
+                use_raw=False,
+            )
+        except Exception:
+            sc.tl.rank_genes_groups(
+                adata_copy,
+                groupby=group_name,
+                method="t-test",
+                n_genes=n_top_genes,
+                use_raw=False,
+            )
+
+        for grp in unique_groups:
+            try:
+                df = sc.get.rank_genes_groups_df(adata_copy, group=grp)
+                degs_dict[grp] = df["names"].head(n_top_genes).tolist()
+            except Exception as exc:
+                logger.warning("Could not get DEGs for group %s: %s", grp, exc)
+                degs_dict[grp] = []
+
+        return degs_dict
+
+    logger.info("Computing gold-standard DEGs from ground-truth labels...")
+    gold_degs = _compute_degs_per_group(adata, labels_true, "_gold")
+
+    logger.info("Computing DEGs from predicted clusters...")
+    pred_degs = _compute_degs_per_group(adata, labels_pred, "_pred")
+
+    gold_types = sorted(gold_degs.keys())
+    pred_clusters = sorted(pred_degs.keys())
+    overlap_data = np.zeros((len(pred_clusters), len(gold_types)))
+
+    for i, pred_cluster in enumerate(pred_clusters):
+        pred_genes = set(pred_degs.get(pred_cluster, []))
+        for j, gold_type in enumerate(gold_types):
+            gold_genes = set(gold_degs.get(gold_type, []))
+            if pred_genes and gold_genes:
+                overlap_data[i, j] = len(pred_genes & gold_genes) / float(n_top_genes)
+            else:
+                overlap_data[i, j] = 0.0
+
+    overlap_df = pd.DataFrame(
+        overlap_data,
+        index=pred_clusters,
+        columns=gold_types,
+    )
+    overlap_df.index.name = "Predicted Cluster"
+    overlap_df.columns.name = "Gold Standard Type"
+
+    cluster_to_type: Dict[str, str] = {}
+    for i, pred_cluster in enumerate(pred_clusters):
+        best_idx = int(np.argmax(overlap_data[i]))
+        best_score = overlap_data[i, best_idx]
+        best_type = gold_types[best_idx]
+        cluster_to_type[pred_cluster] = best_type if best_score > 0 else f"Unknown_{pred_cluster}"
+
+    marker_labels = np.array(
+        [cluster_to_type.get(str(lbl), f"Unknown_{lbl}") for lbl in labels_pred],
+        dtype=object,
+    )
+    hungarian_labels = align_labels(labels_true, labels_pred)
+
+    return {
+        "marker_labels": marker_labels,
+        "overlap_matrix": overlap_df,
+        "gold_degs": gold_degs,
+        "pred_degs": pred_degs,
+        "hungarian_labels": hungarian_labels,
+        "cluster_to_type": cluster_to_type,
+    }
 
 
 def _accuracy(labels_true: np.ndarray, labels_pred: np.ndarray) -> float:
@@ -203,7 +313,7 @@ def _silhouette(embeddings: np.ndarray, labels_pred: np.ndarray, sample_size: Op
     X = embeddings
     y = labels_pred
     if sample_size is not None and len(y) > sample_size:
-        idx = np.random.default_rng(42).choice(len(y), sample_size, replace=False)
+        idx = np.random.choice(len(y), sample_size, replace=False)
         X = X[idx]
         y = y[idx]
 

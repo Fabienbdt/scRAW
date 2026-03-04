@@ -1,410 +1,1171 @@
 #!/usr/bin/env python3
-"""Standalone figure generation for scRAW dedicated runs."""
+"""Visualization utilities for standalone scRAW runs (SCRBenchmark parity)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
+
+from .metrics import align_labels
 
 
-def _to_2d(embeddings: np.ndarray, random_state: int = 42) -> np.ndarray:
-    """Helper interne: to 2d.
-    
-    
-    Args:
-        embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
-        random_state: Paramètre d'entrée `random_state` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    X = np.asarray(embeddings)
-    if X.ndim != 2 or X.shape[0] == 0:
-        return np.zeros((0, 2), dtype=np.float32)
-    if X.shape[1] == 2:
-        return X.astype(np.float32)
+def _compute_umap_or_2d(embeddings: np.ndarray, random_state: int = 42) -> Tuple[np.ndarray, bool]:
+    """Return a 2D projection and whether we had to fallback to first 2 dims."""
+    embeddings = np.asarray(embeddings)
+    if embeddings.ndim != 2 or embeddings.shape[1] < 2:
+        raise ValueError("Embeddings must be a 2D array with at least 2 columns.")
 
-    try:
-        import umap  # type: ignore
+    if embeddings.shape[1] <= 2:
+        return embeddings, False
 
-        reducer = umap.UMAP(n_components=2, random_state=random_state)
-        Z = reducer.fit_transform(X)
-        return np.asarray(Z, dtype=np.float32)
-    except Exception:
+    if embeddings.shape[1] > 50:
         from sklearn.decomposition import PCA
 
-        pca = PCA(n_components=2, random_state=random_state)
-        Z = pca.fit_transform(X)
-        return np.asarray(Z, dtype=np.float32)
+        n_comps = min(50, embeddings.shape[0] - 1, embeddings.shape[1])
+        pca = PCA(n_components=n_comps, random_state=random_state)
+        embeddings = pca.fit_transform(embeddings)
+
+    try:
+        import umap
+
+        reducer = umap.UMAP(n_components=2, random_state=random_state)
+        return reducer.fit_transform(embeddings), False
+    except Exception:
+        return embeddings[:, :2], True
 
 
-def _map_categories(labels: Sequence[Any]) -> Tuple[np.ndarray, Dict[str, int]]:
-    """Helper interne: map categories.
-    
-    
-    Args:
-        labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    labels_str = np.asarray([str(x) for x in labels], dtype=object)
-    uniq = sorted(np.unique(labels_str).tolist())
-    mapping = {v: i for i, v in enumerate(uniq)}
-    idx = np.asarray([mapping[v] for v in labels_str], dtype=int)
-    return idx, mapping
+def _select_snapshot_indices_for_gallery(snapshots: List[Dict[str, Any]], max_snapshots: int) -> List[int]:
+    """Select representative snapshot indices for gallery-like UMAP evolution."""
+    n = len(snapshots)
+    if n == 0:
+        return []
+    if max_snapshots <= 0 or n <= max_snapshots:
+        return list(range(n))
+
+    must_keep: set[int] = {0, n - 1}
+    prev_phase = str(snapshots[0].get("phase", ""))
+    warmup_indices: List[int] = []
+    for i, snap in enumerate(snapshots):
+        phase = str(snap.get("phase", ""))
+        if phase.lower().startswith("warm"):
+            warmup_indices.append(i)
+        if i > 0 and phase != prev_phase:
+            must_keep.add(i - 1)
+            must_keep.add(i)
+        prev_phase = phase
+
+    if warmup_indices:
+        must_keep.add(max(warmup_indices))
+
+    refresh_indices = [
+        i for i, snap in enumerate(snapshots) if snap.get("snapshot_type") == "weight_refresh"
+    ]
+    if 0 < len(refresh_indices) <= 3:
+        must_keep.update(refresh_indices)
+    elif len(refresh_indices) > 3:
+        must_keep.update(
+            [
+                refresh_indices[0],
+                refresh_indices[len(refresh_indices) // 2],
+                refresh_indices[-1],
+            ]
+        )
+
+    selected = sorted(i for i in must_keep if 0 <= i < n)
+    if len(selected) >= max_snapshots:
+        key_positions = np.linspace(0, len(selected) - 1, num=max_snapshots)
+        picked = sorted({selected[int(round(pos))] for pos in key_positions})
+        return picked[:max_snapshots]
+
+    selected_set = set(selected)
+    fill_candidates = [
+        int(round(pos))
+        for pos in np.linspace(0, n - 1, num=max(max_snapshots * 3, n))
+    ]
+    for idx in fill_candidates:
+        if idx not in selected_set:
+            selected.append(idx)
+            selected_set.add(idx)
+            if len(selected) >= max_snapshots:
+                break
+
+    return sorted(selected)
 
 
-def _scatter_cat(ax: Any, coords: np.ndarray, labels: Sequence[Any], title: str, point_size: float = 4.0) -> None:
-    """Helper interne: scatter cat.
-    
-    
-    Args:
-        ax: Paramètre d'entrée `ax` utilisé dans cette étape du pipeline.
-        coords: Paramètre d'entrée `coords` utilisé dans cette étape du pipeline.
-        labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-        point_size: Paramètre d'entrée `point_size` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    idx, mapping = _map_categories(labels)
-    cmap = plt.get_cmap("tab20", max(len(mapping), 1))
-    ax.scatter(coords[:, 0], coords[:, 1], c=idx, s=point_size, cmap=cmap, linewidths=0, alpha=0.9)
-    ax.set_title(title)
-    ax.set_xticks([])
-    ax.set_yticks([])
+def _compute_shared_umap_sequence(
+    embeddings_per_snapshot: List[np.ndarray],
+    random_state: int = 42,
+) -> Tuple[List[np.ndarray], bool]:
+    """Compute one shared projector and transform each snapshot with it."""
+    if not embeddings_per_snapshot:
+        return [], True
+
+    arrays = [np.asarray(e) for e in embeddings_per_snapshot]
+    if len(arrays) == 1:
+        one, used_fb = _compute_umap_or_2d(arrays[0], random_state=random_state)
+        return [one], used_fb
+
+    first_dim = arrays[0].shape[1] if arrays[0].ndim == 2 else -1
+    if first_dim < 2 or any(a.ndim != 2 or a.shape[1] != first_dim for a in arrays):
+        out = []
+        used_any_fallback = False
+        for emb in arrays:
+            emb2d, used_fb = _compute_umap_or_2d(emb, random_state=random_state)
+            out.append(emb2d)
+            used_any_fallback = used_any_fallback or used_fb
+        return out, used_any_fallback
+
+    common = np.vstack(arrays)
+    transformed_arrays = arrays
+    if common.shape[1] > 50:
+        from sklearn.decomposition import PCA
+
+        n_comps = min(50, common.shape[0] - 1, common.shape[1])
+        pca_model = PCA(n_components=n_comps, random_state=random_state)
+        common = pca_model.fit_transform(common)
+        transformed_arrays = [pca_model.transform(emb) for emb in arrays]
+
+    if common.shape[1] <= 2:
+        return [emb[:, :2] for emb in transformed_arrays], False
+
+    try:
+        import umap
+
+        reducer = umap.UMAP(n_components=2, random_state=random_state)
+        reducer.fit(common)
+        out = [reducer.transform(emb) for emb in transformed_arrays]
+        return out, False
+    except Exception:
+        return [emb[:, :2] for emb in transformed_arrays], True
+
+
+def _encode_labels(labels: np.ndarray) -> Tuple[np.ndarray, List[Any], Dict[Any, int]]:
+    """Encode arbitrary labels to stable integer IDs for plotting."""
+    labels_arr = np.asarray(labels, dtype=object)
+    sentinel = "__MISSING__"
+    normalized = np.array([sentinel if pd.isna(x) else x for x in labels_arr], dtype=object)
+
+    if isinstance(labels, pd.Series) and isinstance(labels.dtype, pd.CategoricalDtype):
+        unique_labels = [sentinel if pd.isna(x) else x for x in labels.cat.categories]
+        extra = [x for x in pd.unique(normalized) if x not in unique_labels]
+        unique_labels.extend(extra)
+    else:
+        unique_labels = list(pd.unique(normalized))
+
+    label_map = {lbl: i for i, lbl in enumerate(unique_labels)}
+    encoded = np.array([label_map[x] for x in normalized])
+    return encoded, unique_labels, label_map
+
+
+def _decode_label_name(label: Any, label_names: Optional[Dict[int, str]]) -> str:
+    """Decode numeric labels to readable names when a map is provided."""
+    if label == "__MISSING__":
+        return "NA"
+    label_text = str(label)
+    if label_text.startswith("Unmatched_Cluster_"):
+        return label_text.replace("Unmatched_Cluster_", "Unmatched cluster ")
+    if label_names is None:
+        return label_text
+
+    try:
+        key = int(float(label))
+        if key in label_names:
+            return str(label_names[key])
+    except (ValueError, TypeError):
+        pass
+    return label_text
+
+
+def _tag_unmatched_predicted_labels(
+    predicted_labels: np.ndarray,
+    label_names: Optional[Dict[int, str]],
+) -> np.ndarray:
+    """Mark predicted labels that are outside known label IDs as unmatched."""
+    if not label_names:
+        return np.asarray(predicted_labels, dtype=object)
+
+    known_ids = set()
+    for k in label_names.keys():
+        try:
+            known_ids.add(int(k))
+        except (TypeError, ValueError):
+            continue
+
+    out = []
+    for raw in np.asarray(predicted_labels, dtype=object):
+        txt = str(raw)
+        if txt.startswith("Unmatched_Cluster_"):
+            out.append(txt)
+            continue
+        try:
+            idx = int(float(txt))
+        except (TypeError, ValueError):
+            out.append(raw)
+            continue
+        if idx in known_ids:
+            out.append(raw)
+        else:
+            out.append(f"Unmatched_Cluster_{idx}")
+    return np.asarray(out, dtype=object)
+
+
+def _draw_cluster_overlays(
+    ax: plt.Axes,
+    points_2d: np.ndarray,
+    labels: np.ndarray,
+    outline_mode: str = "ellipse",
+    n_std: float = 1.8,
+    show_centroids: bool = False,
+    centroid_label_names: Optional[Dict[int, str]] = None,
+) -> None:
+    """Draw optional cluster outlines and centroid labels."""
+    from matplotlib.patches import Ellipse, Polygon
+
+    labels_arr = np.asarray(labels)
+    _, unique_labels, _ = _encode_labels(labels_arr)
+    n_labels = len(unique_labels)
+    cmap = plt.cm.tab20 if n_labels <= 20 else plt.cm.gist_ncar
+    norm = plt.Normalize(vmin=0, vmax=max(n_labels - 1, 1))
+
+    mode = (outline_mode or "ellipse").lower()
+    if mode in ("hull", "convex"):
+        mode = "convex_hull"
+    if mode not in {"none", "ellipse", "convex_hull", "density"}:
+        mode = "ellipse"
+
+    top_for_density = set(unique_labels)
+    if mode == "density" and n_labels > 16:
+        counts = pd.Series(labels_arr).value_counts()
+        top_for_density = set(counts.index[:16].tolist())
+
+    for idx, group_label in enumerate(unique_labels):
+        mask = labels_arr == group_label
+        points = points_2d[mask]
+        if len(points) < 3:
+            continue
+
+        color = cmap(norm(idx))
+        try:
+            if mode == "ellipse":
+                mean = np.mean(points, axis=0)
+                cov = np.cov(points.T)
+                eigenvalues, eigenvectors = np.linalg.eigh(cov)
+                order = eigenvalues.argsort()[::-1]
+                eigenvalues = eigenvalues[order]
+                eigenvectors = eigenvectors[:, order]
+                angle = np.degrees(np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0]))
+                width = 2 * n_std * np.sqrt(max(eigenvalues[0], 1e-3))
+                height = 2 * n_std * np.sqrt(max(eigenvalues[1], 1e-3))
+
+                ax.add_patch(
+                    Ellipse(
+                        xy=mean,
+                        width=width,
+                        height=height,
+                        angle=angle,
+                        facecolor=color,
+                        edgecolor="none",
+                        alpha=0.10,
+                    )
+                )
+                ax.add_patch(
+                    Ellipse(
+                        xy=mean,
+                        width=width,
+                        height=height,
+                        angle=angle,
+                        facecolor="none",
+                        edgecolor=color,
+                        linewidth=1.8,
+                        alpha=0.70,
+                    )
+                )
+            elif mode == "convex_hull":
+                from scipy.spatial import ConvexHull
+
+                hull = ConvexHull(points)
+                hull_pts = points[hull.vertices]
+                ax.add_patch(
+                    Polygon(
+                        hull_pts,
+                        closed=True,
+                        facecolor=color,
+                        edgecolor="none",
+                        alpha=0.10,
+                    )
+                )
+                ax.add_patch(
+                    Polygon(
+                        hull_pts,
+                        closed=True,
+                        facecolor="none",
+                        edgecolor=color,
+                        linewidth=1.8,
+                        alpha=0.75,
+                    )
+                )
+            elif mode == "density":
+                if group_label in top_for_density and len(points) >= 20:
+                    sns.kdeplot(
+                        x=points[:, 0],
+                        y=points[:, 1],
+                        ax=ax,
+                        levels=1,
+                        color=color,
+                        linewidths=1.5,
+                        fill=False,
+                        thresh=0.20,
+                    )
+        except Exception:
+            continue
+
+        if show_centroids:
+            center = points.mean(axis=0)
+            label_text = _decode_label_name(group_label, centroid_label_names)
+            ax.text(
+                center[0],
+                center[1],
+                label_text,
+                fontsize=7,
+                ha="center",
+                va="center",
+                color="black",
+                bbox=dict(
+                    boxstyle="round,pad=0.15",
+                    facecolor="white",
+                    alpha=0.75,
+                    edgecolor="none",
+                ),
+            )
+
+
+def _add_param_annotation(
+    fig: plt.Figure,
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
+) -> None:
+    """Draw a small annotation box with run context."""
+    lines: List[str] = []
+    if dataset_info:
+        lines.append(dataset_info)
+    if params_info:
+        for key, val in params_info.items():
+            lines.append(f"{key}: {val}")
+    if not lines:
+        return
+    text = "\n".join(lines)
+    fig.text(
+        0.01,
+        0.01,
+        text,
+        fontsize=7,
+        fontfamily="monospace",
+        verticalalignment="bottom",
+        horizontalalignment="left",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7, edgecolor="gray"),
+        transform=fig.transFigure,
+    )
 
 
 def plot_umap_comparison(
     embeddings: np.ndarray,
-    true_labels: Sequence[Any],
-    predicted_labels: Sequence[Any],
-    title: str,
+    true_labels: np.ndarray,
+    predicted_labels: np.ndarray,
+    algorithm_name: str = "Algorithm",
+    save_path: Optional[str] = None,
+    n_std: float = 1.8,
+    label_names: Optional[Dict[int, str]] = None,
+    outline_mode: str = "none",
+    show_cluster_centroids: bool = True,
+    projection_name: str = "UMAP",
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
 ) -> plt.Figure:
-    """Trace un UMAP final comparant Ground Truth et prédictions.
-    
-    
-    Args:
-        embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
-        true_labels: Paramètre d'entrée `true_labels` utilisé dans cette étape du pipeline.
-        predicted_labels: Paramètre d'entrée `predicted_labels` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    coords = _to_2d(embeddings)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    _scatter_cat(axes[0], coords, true_labels, "Ground Truth")
-    _scatter_cat(axes[1], coords, predicted_labels, "Prediction")
-    fig.suptitle(title)
-    fig.tight_layout()
+    """Plot side-by-side UMAP comparison: Ground Truth vs Predicted clusters."""
+    embeddings = np.asarray(embeddings)
+    true_labels = np.asarray(true_labels)
+    predicted_labels = np.asarray(predicted_labels)
+
+    try:
+        predicted_labels = align_labels(true_labels, predicted_labels)
+    except Exception:
+        pass
+    predicted_labels = _tag_unmatched_predicted_labels(predicted_labels, label_names)
+
+    embeddings_2d, _ = _compute_umap_or_2d(embeddings)
+
+    unmatched_prefix = "Unmatched_Cluster_"
+    unmatched_color = "#888888"
+
+    true_str = np.asarray(true_labels, dtype=object).astype(str)
+    pred_str = np.asarray(predicted_labels, dtype=object).astype(str)
+
+    true_unique = list(pd.unique(true_str))
+    pred_unmatched = set(x for x in pd.unique(pred_str) if str(x).startswith(unmatched_prefix))
+    pred_matched_extra = [
+        x for x in pd.unique(pred_str)
+        if not str(x).startswith(unmatched_prefix) and x not in true_unique
+    ]
+    real_unique: List[Any] = list(true_unique) + list(pred_matched_extra)
+    real_map: Dict[Any, int] = {lbl: i for i, lbl in enumerate(real_unique)}
+    n_real = len(real_unique)
+    shared_cmap = plt.cm.tab20 if n_real <= 20 else plt.cm.gist_ncar
+    shared_norm = plt.Normalize(vmin=0, vmax=max(n_real - 1, 1))
+
+    fig, axes = plt.subplots(1, 3, figsize=(22, 7))
+
+    def _draw_panel(
+        ax: plt.Axes,
+        labels: np.ndarray,
+        panel_title: str,
+        use_label_names: bool = False,
+        custom_label_names: Optional[Dict[int, str]] = None,
+    ) -> None:
+        labels_arr = np.asarray(labels, dtype=object).astype(str)
+        target_map = (
+            custom_label_names
+            if custom_label_names is not None
+            else (label_names if use_label_names else None)
+        )
+
+        is_unmatched = np.array([str(x) in pred_unmatched for x in labels_arr], dtype=bool)
+        matched_mask = ~is_unmatched
+
+        if np.any(matched_mask):
+            encoded = np.array([real_map.get(str(x), 0) for x in labels_arr[matched_mask]])
+            ax.scatter(
+                embeddings_2d[matched_mask, 0],
+                embeddings_2d[matched_mask, 1],
+                c=encoded,
+                cmap=shared_cmap,
+                norm=shared_norm,
+                s=3,
+                alpha=0.8,
+            )
+        if np.any(is_unmatched):
+            ax.scatter(
+                embeddings_2d[is_unmatched, 0],
+                embeddings_2d[is_unmatched, 1],
+                c=unmatched_color,
+                s=5,
+                alpha=0.9,
+                marker="x",
+                linewidths=0.5,
+            )
+
+        if outline_mode != "none" or show_cluster_centroids:
+            _draw_cluster_overlays(
+                ax=ax,
+                points_2d=embeddings_2d,
+                labels=labels_arr,
+                outline_mode=outline_mode,
+                n_std=n_std,
+                show_centroids=show_cluster_centroids,
+                centroid_label_names=target_map,
+            )
+
+        ax.set_title(panel_title, fontsize=13, fontweight="bold")
+        ax.set_xlabel(f"{projection_name} 1", fontsize=10)
+        ax.set_ylabel(f"{projection_name} 2", fontsize=10)
+
+        present = set(labels_arr)
+        all_labels_ordered = list(real_unique) + sorted(pred_unmatched)
+        n_present = sum(1 for lbl in all_labels_ordered if lbl in present)
+        if n_present <= 30:
+            handles = []
+            for lbl in all_labels_ordered:
+                if lbl not in present:
+                    continue
+                if str(lbl) in pred_unmatched:
+                    handles.append(
+                        plt.Line2D(
+                            [0],
+                            [0],
+                            marker="x",
+                            color=unmatched_color,
+                            markerfacecolor=unmatched_color,
+                            markersize=7,
+                            linestyle="None",
+                            label=_decode_label_name(lbl, target_map),
+                        )
+                    )
+                else:
+                    i = real_map.get(str(lbl), 0)
+                    handles.append(
+                        plt.Line2D(
+                            [0],
+                            [0],
+                            marker="o",
+                            color="w",
+                            markerfacecolor=shared_cmap(shared_norm(i)),
+                            markersize=7,
+                            label=_decode_label_name(lbl, target_map),
+                        )
+                    )
+            ax.legend(
+                handles=handles,
+                fontsize=7,
+                markerscale=1.2,
+                bbox_to_anchor=(1.01, 1),
+                loc="upper left",
+                borderaxespad=0,
+                framealpha=0.9,
+            )
+        else:
+            ax.text(
+                0.02,
+                0.02,
+                f"({n_present} clusters - legend hidden)",
+                transform=ax.transAxes,
+                fontsize=8,
+                alpha=0.7,
+            )
+
+    _draw_panel(axes[0], true_str, "Ground Truth (Cell Types)", use_label_names=True)
+    _draw_panel(axes[1], predicted_labels, "Predicted Clusters (IDs)", use_label_names=False)
+    _draw_panel(
+        axes[2],
+        pred_str,
+        "Predicted (Aligned & Named)",
+        use_label_names=True,
+        custom_label_names=label_names,
+    )
+
+    fig.suptitle(f"{projection_name} Comparison: {algorithm_name}", fontsize=16, fontweight="bold", y=1.02)
+
+    if params_info or dataset_info:
+        _add_param_annotation(fig, params_info, dataset_info)
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    return fig
+
+
+def plot_loss_curves(
+    loss_history: List[Dict[str, Any]],
+    algorithm_name: str,
+    show_components: bool = True,
+) -> Optional[plt.Figure]:
+    """Plot training/validation loss curves from phase-wise loss history."""
+    if not loss_history:
+        return None
+
+    n_phases = len(loss_history)
+    fig, axes = plt.subplots(1, n_phases, figsize=(6 * n_phases, 4), squeeze=False)
+    component_colors = ["#e74c3c", "#3498db", "#2ecc71", "#9b59b6", "#f39c12", "#1abc9c"]
+
+    for idx, phase in enumerate(loss_history):
+        ax = axes[0, idx]
+        train_loss = phase.get("train_loss", [])
+        val_loss = phase.get("val_loss", [])
+        default_len = max(len(train_loss), len(val_loss))
+        epochs = phase.get("epochs", list(range(default_len)))
+        phase_name = phase.get("name", f"Phase {idx + 1}")
+
+        if not train_loss and not val_loss:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(phase_name)
+            continue
+
+        if train_loss:
+            train_epochs = epochs[:len(train_loss)] if len(epochs) >= len(train_loss) else list(range(len(train_loss)))
+            ax.plot(train_epochs, train_loss, color="black", linewidth=2, label="Train loss")
+        if val_loss:
+            val_epochs = epochs[:len(val_loss)] if len(epochs) >= len(val_loss) else list(range(len(val_loss)))
+            ax.plot(val_epochs, val_loss, color="#1f77b4", linewidth=2, label="Val loss")
+
+        if show_components and "components" in phase:
+            for c_idx, (comp_name, comp_values) in enumerate(phase["components"].items()):
+                if comp_values == train_loss or comp_values == val_loss:
+                    continue
+                comp_epochs = epochs[:len(comp_values)] if len(epochs) >= len(comp_values) else list(range(len(comp_values)))
+                color = component_colors[c_idx % len(component_colors)]
+                ax.plot(
+                    comp_epochs,
+                    comp_values,
+                    color=color,
+                    linewidth=1,
+                    linestyle="--",
+                    alpha=0.7,
+                    label=comp_name,
+                )
+
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.set_title(phase_name, fontweight="bold")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    has_val = any(phase.get("val_loss") for phase in loss_history)
+    title_suffix = "Training/Validation Loss" if has_val else "Training Loss"
+    fig.suptitle(f"{algorithm_name} - {title_suffix}", fontsize=13, fontweight="bold")
+    plt.tight_layout()
     return fig
 
 
 def plot_umap_batch(
     embeddings: np.ndarray,
-    batch_labels: Sequence[Any],
-    title: str,
-) -> plt.Figure:
-    """Trace un UMAP final coloré par batch d'origine.
-    
-    
-    Args:
-        embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
-        batch_labels: Paramètre d'entrée `batch_labels` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    coords = _to_2d(embeddings)
-    fig, ax = plt.subplots(figsize=(7, 6))
-    _scatter_cat(ax, coords, batch_labels, title)
-    fig.tight_layout()
+    batch_labels: np.ndarray,
+    title: str = "UMAP - Batch",
+    point_size: int = 2,
+    random_state: int = 42,
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
+) -> Optional[plt.Figure]:
+    """Plot UMAP colored by batch labels."""
+    embeddings = np.asarray(embeddings)
+    if embeddings.shape[0] == 0:
+        return None
+
+    embeddings_2d, _ = _compute_umap_or_2d(embeddings, random_state=random_state)
+    encoded, unique_labels, _ = _encode_labels(np.asarray(batch_labels))
+    n_labels = len(unique_labels)
+    cmap = plt.cm.tab10 if n_labels <= 10 else plt.cm.tab20
+    norm = plt.Normalize(vmin=0, vmax=max(n_labels - 1, 1))
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.scatter(
+        embeddings_2d[:, 0],
+        embeddings_2d[:, 1],
+        c=encoded,
+        cmap=cmap,
+        norm=norm,
+        s=point_size,
+        alpha=0.7,
+        rasterized=True,
+    )
+    ax.set_title(title, fontsize=14)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+
+    if n_labels <= 30:
+        handles = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=cmap(norm(i)),
+                markersize=6,
+                label=str(lbl),
+            )
+            for i, lbl in enumerate(unique_labels)
+        ]
+        ax.legend(
+            handles=handles,
+            fontsize=8,
+            markerscale=1.5,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+            borderaxespad=0,
+            framealpha=0.9,
+        )
+
+    if params_info or dataset_info:
+        _add_param_annotation(fig, params_info, dataset_info)
+
+    plt.tight_layout()
     return fig
 
 
-def _nonlinear_alpha(weights: np.ndarray, power: float = 4.0) -> np.ndarray:
-    """Helper interne: nonlinear alpha.
-    
-    
-    Args:
-        weights: Paramètre d'entrée `weights` utilisé dans cette étape du pipeline.
-        power: Paramètre d'entrée `power` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    w = np.asarray(weights, dtype=np.float32)
-    if w.size == 0:
-        return w
-    w_min = float(np.nanmin(w))
-    w_max = float(np.nanmax(w))
-    if not np.isfinite(w_min) or not np.isfinite(w_max) or w_max <= w_min:
-        return np.full_like(w, 0.9, dtype=np.float32)
-    wn = (w - w_min) / (w_max - w_min)
-    return (0.02 + 0.98 * np.power(np.clip(wn, 0.0, 1.0), power)).astype(np.float32)
+def _normalize_cell_weights_robust(cell_weights: np.ndarray) -> np.ndarray:
+    """Robustly normalize weights to [0, 1] using 5th/95th percentiles."""
+    w = np.asarray(cell_weights, dtype=np.float64)
+    if len(w) == 0:
+        return np.asarray([], dtype=np.float64)
+
+    w_lo = float(np.nanpercentile(w, 5))
+    w_hi = float(np.nanpercentile(w, 95))
+    if not np.isfinite(w_lo) or not np.isfinite(w_hi) or w_hi <= w_lo:
+        w_lo = float(np.nanmin(w))
+        w_hi = float(np.nanmax(w))
+    if np.isfinite(w_hi) and w_hi > w_lo:
+        return np.clip((w - w_lo) / (w_hi - w_lo), 0.0, 1.0)
+    return np.full(len(w), 0.5, dtype=np.float64)
+
+
+def _weights_to_alpha_exponential(
+    w_norm: np.ndarray,
+    strength: float = 14.0,
+    min_alpha: float = 0.002,
+) -> np.ndarray:
+    """Convert normalized weights to alpha with strong exponential contrast."""
+    w = np.asarray(w_norm, dtype=np.float64)
+    return np.clip(np.exp((w - 1.0) * strength), min_alpha, 1.0)
 
 
 def plot_umap_weighted(
     embeddings: np.ndarray,
-    labels: Sequence[Any],
-    cell_weights: Sequence[float],
-    title: str,
-) -> plt.Figure:
-    """Trace un UMAP où l'opacité varie selon le poids de reconstruction.
-    
-    
-    Args:
-        embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
-        labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
-        cell_weights: Paramètre d'entrée `cell_weights` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    coords = _to_2d(embeddings)
-    idx, mapping = _map_categories(labels)
-    cmap = plt.get_cmap("tab20", max(len(mapping), 1))
-    base_colors = cmap(idx)
-    alpha = _nonlinear_alpha(np.asarray(cell_weights, dtype=np.float32), power=4.0)
+    labels: np.ndarray,
+    cell_weights: np.ndarray,
+    title: str = "UMAP - Cell Weights (Opacity ∝ loss weight)",
+    point_size: int = 3,
+    random_state: int = 42,
+    label_names: Optional[Dict[int, str]] = None,
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
+) -> Optional[plt.Figure]:
+    """Plot UMAP with label colors and opacity proportional to reconstruction weight."""
+    embeddings = np.asarray(embeddings)
+    cell_weights = np.asarray(cell_weights, dtype=np.float64)
+    if embeddings.shape[0] == 0:
+        return None
 
-    colors = base_colors.copy()
-    colors[:, 3] = alpha
+    embeddings_2d, _ = _compute_umap_or_2d(embeddings, random_state=random_state)
+    encoded, unique_labels, _ = _encode_labels(np.asarray(labels))
+    n_labels = len(unique_labels)
+    cmap = plt.cm.tab20 if n_labels <= 20 else plt.cm.gist_ncar
+    norm_c = plt.Normalize(vmin=0, vmax=max(n_labels - 1, 1))
 
-    fig, ax = plt.subplots(figsize=(7, 6))
-    ax.scatter(coords[:, 0], coords[:, 1], c=colors, s=4.0, linewidths=0)
-    ax.set_title(title)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    fig.tight_layout()
+    w_norm = _normalize_cell_weights_robust(cell_weights)
+    alpha_arr = _weights_to_alpha_exponential(w_norm, strength=14.0, min_alpha=0.002)
+
+    sort_order = np.argsort(w_norm)
+    e2d_sorted = embeddings_2d[sort_order]
+    enc_sorted = encoded[sort_order]
+    alpha_sorted = alpha_arr[sort_order]
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    colors_per_point = np.array(
+        [list(cmap(norm_c(i))) for i in enc_sorted], dtype=np.float64
+    )
+    colors_per_point[:, 3] = alpha_sorted
+
+    ax.scatter(
+        e2d_sorted[:, 0],
+        e2d_sorted[:, 1],
+        c=colors_per_point,
+        s=float(point_size),
+        rasterized=True,
+        linewidths=0,
+    )
+
+    ax.set_title(
+        title + "\n"
+        "(opacite ∝ poids de reconstruction - rare opaque, commun transparent)",
+        fontsize=12,
+    )
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+
+    if n_labels <= 30:
+        handles = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=cmap(norm_c(i)),
+                markersize=7,
+                label=_decode_label_name(unique_labels[i], label_names),
+            )
+            for i in range(n_labels)
+        ]
+        ax.legend(
+            handles=handles,
+            fontsize=8,
+            markerscale=1.0,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+            borderaxespad=0,
+            framealpha=0.9,
+            title="Cell type",
+            title_fontsize=8,
+        )
+
+    if params_info or dataset_info:
+        _add_param_annotation(fig, params_info, dataset_info)
+
+    plt.tight_layout()
     return fig
 
 
 def plot_umap_weighted_gradient(
     embeddings: np.ndarray,
-    cell_weights: Sequence[float],
-    title: str,
-) -> plt.Figure:
-    """Trace un UMAP avec dégradé de couleur selon le poids de reconstruction.
-    
-    
-    Args:
-        embeddings: Paramètre d'entrée `embeddings` utilisé dans cette étape du pipeline.
-        cell_weights: Paramètre d'entrée `cell_weights` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    coords = _to_2d(embeddings)
-    w = np.asarray(cell_weights, dtype=np.float32)
-    if w.size:
-        w = np.clip(w, np.nanpercentile(w, 1), np.nanpercentile(w, 99))
+    cell_weights: np.ndarray,
+    title: str = "UMAP - Cell Weights (Gradient)",
+    point_size: int = 3,
+    random_state: int = 42,
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
+) -> Optional[plt.Figure]:
+    """Plot UMAP with continuous plasma gradient for reconstruction weights."""
+    embeddings = np.asarray(embeddings)
+    cell_weights = np.asarray(cell_weights, dtype=np.float64)
+    if embeddings.shape[0] == 0:
+        return None
 
-    fig, ax = plt.subplots(figsize=(7, 6))
-    sc = ax.scatter(coords[:, 0], coords[:, 1], c=w, cmap="plasma", s=5.0, linewidths=0)
-    ax.set_title(title)
-    ax.set_xticks([])
-    ax.set_yticks([])
+    embeddings_2d, _ = _compute_umap_or_2d(embeddings, random_state=random_state)
+    w_norm = _normalize_cell_weights_robust(cell_weights)
+
+    sort_order = np.argsort(w_norm)
+    e2d_s = embeddings_2d[sort_order]
+    w_s = w_norm[sort_order]
+
+    fig, ax = plt.subplots(figsize=(11, 8))
+    sc = ax.scatter(
+        e2d_s[:, 0],
+        e2d_s[:, 1],
+        c=w_s,
+        cmap="plasma",
+        vmin=0.0,
+        vmax=1.0,
+        s=float(point_size),
+        alpha=0.95,
+        rasterized=True,
+        linewidths=0,
+    )
     cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("Reconstruction weight")
-    fig.tight_layout()
+    cbar.set_label(
+        "Poids de reconstruction (normalise)\nFaible -> Eleve",
+        rotation=90,
+        labelpad=12,
+        fontsize=10,
+    )
+    w_raw = cell_weights
+    cbar.ax.text(
+        0.5,
+        -0.02,
+        f"min={float(np.nanmin(w_raw)):.2f}",
+        transform=cbar.ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=8,
+        color="#444",
+    )
+    cbar.ax.text(
+        0.5,
+        1.02,
+        f"max={float(np.nanmax(w_raw)):.2f}",
+        transform=cbar.ax.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=8,
+        color="#444",
+    )
+
+    ax.set_title(
+        title + "\n"
+        "(degrade plasma: violet fonce = poids faible, jaune vif = poids eleve)",
+        fontsize=12,
+    )
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+
+    if params_info or dataset_info:
+        _add_param_annotation(fig, params_info, dataset_info)
+
+    plt.tight_layout()
     return fig
-
-
-def _select_periodic_snapshots_every_10(snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Helper interne: select periodic snapshots every 10.
-    
-    
-    Args:
-        snapshots: Paramètre d'entrée `snapshots` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    periodic = [
-        s for s in snapshots
-        if s.get("embeddings") is not None and len(s.get("embeddings")) > 0 and s.get("snapshot_type", "periodic") == "periodic"
-    ]
-    if not periodic:
-        periodic = [s for s in snapshots if s.get("embeddings") is not None and len(s.get("embeddings")) > 0]
-    if not periodic:
-        return []
-
-    selected = []
-    for s in periodic:
-        e = s.get("epoch")
-        if isinstance(e, (int, np.integer)) and int(e) % 10 == 0:
-            selected.append(s)
-
-    if periodic[0] not in selected:
-        selected.insert(0, periodic[0])
-    if periodic[-1] not in selected:
-        selected.append(periodic[-1])
-
-    dedup = []
-    seen = set()
-    for s in selected:
-        sid = id(s)
-        if sid in seen:
-            continue
-        seen.add(sid)
-        dedup.append(s)
-    return dedup
 
 
 def plot_umap_evolution(
-    snapshots: List[Dict[str, Any]],
-    labels: Sequence[Any],
-    title: str,
-    max_panels: int = 12,
+    embedding_snapshots: List[Dict[str, Any]],
+    labels: np.ndarray,
+    algorithm_name: str = "",
+    max_cols: int = 4,
+    point_size: int = 3,
+    random_state: int = 42,
+    max_points: int = 5000,
+    max_snapshots: int = 18,
+    projection_mode: str = "shared",
+    color_mode: str = "ground_truth",
+    cell_weights_per_snapshot: Optional[List[np.ndarray]] = None,
+    batch_labels: Optional[np.ndarray] = None,
+    labels_per_snapshot: Optional[List[np.ndarray]] = None,
+    params_info: Optional[Dict[str, Any]] = None,
+    dataset_info: Optional[str] = None,
 ) -> Optional[plt.Figure]:
-    """Trace l'évolution de l'espace latent à plusieurs epochs.
-    
-    
-    Args:
-        snapshots: Paramètre d'entrée `snapshots` utilisé dans cette étape du pipeline.
-        labels: Paramètre d'entrée `labels` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-        max_panels: Paramètre d'entrée `max_panels` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    selected = _select_periodic_snapshots_every_10(snapshots)
-    if not selected:
+    """Plot gallery of UMAP projections across training snapshots."""
+    from math import ceil
+
+    fixed_label_mode = color_mode in {"ground_truth", "ground_truth_weighted", "batch"}
+    plot_labels = batch_labels if color_mode == "batch" and batch_labels is not None else labels
+
+    valid_snapshots_all = [
+        {"snapshot": s, "orig_idx": i}
+        for i, s in enumerate(embedding_snapshots)
+        if s.get("embeddings") is not None and len(s["embeddings"]) > 0
+    ]
+    selected_indices = _select_snapshot_indices_for_gallery(
+        [x["snapshot"] for x in valid_snapshots_all],
+        max_snapshots=max_snapshots,
+    )
+    valid_snapshots = [valid_snapshots_all[i] for i in selected_indices]
+    if not valid_snapshots:
         return None
 
-    selected = selected[:max_panels]
-    n = len(selected)
-    ncols = min(4, n)
-    nrows = int(np.ceil(n / ncols))
+    if projection_mode not in {"shared", "per_snapshot"}:
+        projection_mode = "shared"
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4.0 * nrows))
-    axes_arr = np.asarray(axes).reshape(-1)
+    n_snapshots = len(valid_snapshots)
+    n_cols = min(n_snapshots, max_cols)
+    n_rows = ceil(n_snapshots / n_cols)
 
-    for ax in axes_arr[n:]:
-        ax.axis("off")
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False)
 
-    # Fit one shared 2D projector on the last snapshot for faster, comparable panels.
-    projector = None
-    last_emb = np.asarray(selected[-1].get("embeddings"))
-    try:
-        import umap  # type: ignore
-
-        projector = umap.UMAP(n_components=2, random_state=42)
-        projector.fit(last_emb)
-    except Exception:
-        try:
-            from sklearn.decomposition import PCA
-
-            projector = PCA(n_components=2, random_state=42)
-            projector.fit(last_emb)
-        except Exception:
-            projector = None
-
-    for i, snap in enumerate(selected):
-        emb = snap.get("embeddings")
-        if emb is None or len(emb) == 0:
-            axes_arr[i].axis("off")
-            continue
-        if len(emb) != len(labels):
-            axes_arr[i].axis("off")
-            continue
-        emb_arr = np.asarray(emb)
-        if projector is not None and hasattr(projector, "transform"):
-            try:
-                coords = projector.transform(emb_arr)
-                coords = np.asarray(coords, dtype=np.float32)
-            except Exception:
-                coords = _to_2d(emb_arr, random_state=42)
+    encoded_fixed = None
+    unique_labels_fixed = None
+    colors_fixed = None
+    if fixed_label_mode:
+        encoded_fixed, unique_labels_fixed, _ = _encode_labels(np.asarray(plot_labels))
+        n_unique_fixed = len(unique_labels_fixed)
+        if n_unique_fixed <= 10:
+            cmap = plt.cm.tab10
+        elif n_unique_fixed <= 20:
+            cmap = plt.cm.tab20
         else:
-            coords = _to_2d(emb_arr, random_state=42)
-        _scatter_cat(axes_arr[i], coords, labels, f"Epoch {snap.get('epoch', '?')}", point_size=2.5)
+            cmap = plt.cm.nipy_spectral
+        colors_fixed = [cmap(i / max(n_unique_fixed - 1, 1)) for i in range(n_unique_fixed)]
 
-    fig.suptitle(title)
-    fig.tight_layout()
-    return fig
+    first_emb = np.asarray(valid_snapshots[0]["snapshot"]["embeddings"])
+    n_cells = first_emb.shape[0]
+    use_subsample = int(max_points) > 0 and n_cells > int(max_points)
+    subsample_idx = None
+    if use_subsample:
+        rng = np.random.default_rng(int(random_state))
+        subsample_idx = np.sort(rng.choice(n_cells, size=int(max_points), replace=False))
+        if encoded_fixed is not None:
+            encoded_fixed = encoded_fixed[subsample_idx]
 
+    legend_unique_labels = None
+    legend_colors = None
 
-def plot_loss_curves(loss_history: List[Dict[str, Any]], title: str) -> Optional[plt.Figure]:
-    """Trace les courbes de loss par phase d'entraînement.
-    
-    
-    Args:
-        loss_history: Paramètre d'entrée `loss_history` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    if not loss_history:
-        return None
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for phase in loss_history:
-        name = str(phase.get("name", "phase"))
-        epochs = phase.get("epochs", [])
-        train = phase.get("train_loss", [])
-        if epochs and train and len(epochs) == len(train):
-            ax.plot(epochs, train, label=f"{name} train")
-        val = phase.get("val_loss", [])
-        if epochs and val and len(epochs) == len(val):
-            ax.plot(epochs, val, linestyle="--", label=f"{name} val")
+    shared_umap_fallback = False
+    shared_umap_2d_by_snapshot: Optional[List[np.ndarray]] = None
+    if projection_mode == "shared":
+        shared_input = []
+        for entry in valid_snapshots:
+            emb = np.asarray(entry["snapshot"]["embeddings"])
+            if use_subsample and subsample_idx is not None:
+                emb = emb[subsample_idx]
+            shared_input.append(emb)
+        shared_umap_2d_by_snapshot, shared_umap_fallback = _compute_shared_umap_sequence(
+            shared_input,
+            random_state=random_state,
+        )
 
-    ax.set_title(title)
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.legend(loc="best")
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    return fig
+    for idx, entry in enumerate(valid_snapshots):
+        snapshot = entry["snapshot"]
+        orig_idx = int(entry["orig_idx"])
+        row, col = idx // n_cols, idx % n_cols
+        ax = axes[row][col]
 
+        emb = snapshot["embeddings"]
+        if use_subsample and subsample_idx is not None:
+            emb = np.asarray(emb)[subsample_idx]
+        epoch = snapshot.get("epoch", "?")
+        phase = snapshot.get("phase", "")
 
-def plot_marker_overlap_heatmap(true_labels: Sequence[Any], pred_labels: Sequence[Any], title: str) -> plt.Figure:
-    """Trace la heatmap de recouvrement labels réels vs clusters prédits.
-    
-    
-    Args:
-        true_labels: Paramètre d'entrée `true_labels` utilisé dans cette étape du pipeline.
-        pred_labels: Paramètre d'entrée `pred_labels` utilisé dans cette étape du pipeline.
-        title: Paramètre d'entrée `title` utilisé dans cette étape du pipeline.
-    
-    Returns:
-        Valeur calculée par la fonction.
-    """
-    from sklearn.metrics import confusion_matrix
+        if shared_umap_2d_by_snapshot is not None and idx < len(shared_umap_2d_by_snapshot):
+            umap_2d = shared_umap_2d_by_snapshot[idx]
+        else:
+            umap_2d, _ = _compute_umap_or_2d(emb, random_state=random_state)
 
-    y_true = np.asarray([str(x) for x in true_labels], dtype=object)
-    y_pred = np.asarray([str(x) for x in pred_labels], dtype=object)
+        use_weighted_alpha = (
+            color_mode == "ground_truth_weighted"
+            and cell_weights_per_snapshot is not None
+            and orig_idx < len(cell_weights_per_snapshot)
+            and cell_weights_per_snapshot[orig_idx] is not None
+        )
+        alpha_arr = None
+        if use_weighted_alpha:
+            w = np.asarray(cell_weights_per_snapshot[orig_idx], dtype=np.float64)
+            if use_subsample and subsample_idx is not None:
+                w = w[subsample_idx]
+            w_norm = _normalize_cell_weights_robust(w)
+            alpha_arr = _weights_to_alpha_exponential(w_norm)
 
-    classes_true = sorted(np.unique(y_true).tolist())
-    classes_pred = sorted(np.unique(y_pred).tolist())
-    cm = confusion_matrix(y_true, y_pred, labels=classes_true)
-    row_sum = cm.sum(axis=1, keepdims=True)
-    cmn = np.divide(cm, row_sum, out=np.zeros_like(cm, dtype=float), where=row_sum > 0)
+        encoded_curr = None
+        unique_curr = None
+        colors_curr = None
+        if fixed_label_mode:
+            encoded_curr = encoded_fixed
+            unique_curr = unique_labels_fixed
+            colors_curr = colors_fixed
+        else:
+            snap_labels = None
+            if labels_per_snapshot is not None and orig_idx < len(labels_per_snapshot):
+                snap_labels = labels_per_snapshot[orig_idx]
+            if snap_labels is None:
+                snap_labels = snapshot.get("pseudo_labels")
+            if snap_labels is None:
+                ax.text(0.5, 0.5, "No pseudo-labels", ha="center", va="center", fontsize=9)
+                ax.set_title(f"Epoch {epoch} ({phase})", fontsize=9, fontweight="bold")
+                ax.set_xticks([])
+                ax.set_yticks([])
+                continue
 
-    fig, ax = plt.subplots(figsize=(max(8, len(classes_pred) * 0.4), max(6, len(classes_true) * 0.35)))
-    im = ax.imshow(cmn, aspect="auto", cmap="viridis", vmin=0.0, vmax=1.0)
-    ax.set_title(title)
-    ax.set_xlabel("Predicted cluster")
-    ax.set_ylabel("True label")
-    ax.set_yticks(np.arange(len(classes_true)))
-    ax.set_yticklabels(classes_true, fontsize=7)
-    # Keep x ticks sparse for readability.
-    if len(classes_pred) <= 40:
-        ax.set_xticks(np.arange(len(classes_pred)))
-        ax.set_xticklabels(classes_pred, rotation=90, fontsize=6)
-    else:
+            snap_labels = np.asarray(snap_labels)
+            if len(snap_labels) != len(snapshot["embeddings"]):
+                ax.text(0.5, 0.5, "Pseudo-label size mismatch", ha="center", va="center", fontsize=9)
+                ax.set_title(f"Epoch {epoch} ({phase})", fontsize=9, fontweight="bold")
+                ax.set_xticks([])
+                ax.set_yticks([])
+                continue
+
+            if use_subsample and subsample_idx is not None:
+                snap_labels = snap_labels[subsample_idx]
+
+            encoded_curr, unique_curr, _ = _encode_labels(snap_labels)
+            n_unique_curr = len(unique_curr)
+            if n_unique_curr <= 10:
+                cmap_curr = plt.cm.tab10
+            elif n_unique_curr <= 20:
+                cmap_curr = plt.cm.tab20
+            else:
+                cmap_curr = plt.cm.nipy_spectral
+            colors_curr = [cmap_curr(i / max(n_unique_curr - 1, 1)) for i in range(n_unique_curr)]
+
+        if encoded_curr is None or unique_curr is None or colors_curr is None:
+            ax.text(0.5, 0.5, "No labels", ha="center", va="center", fontsize=9)
+            ax.set_title(f"Epoch {epoch} ({phase})", fontsize=9, fontweight="bold")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            continue
+
+        if legend_unique_labels is None and len(unique_curr) <= 20:
+            legend_unique_labels = unique_curr
+            legend_colors = colors_curr
+
+        for label_idx, label_name in enumerate(unique_curr):
+            mask = encoded_curr == label_idx
+            if mask.sum() == 0:
+                continue
+
+            if alpha_arr is not None:
+                base_rgba = np.array(colors_curr[label_idx], dtype=np.float64)
+                rgba = np.tile(base_rgba, (int(mask.sum()), 1))
+                rgba[:, 3] = alpha_arr[mask]
+                ax.scatter(
+                    umap_2d[mask, 0],
+                    umap_2d[mask, 1],
+                    c=rgba,
+                    s=float(point_size),
+                    label=str(label_name) if idx == 0 else None,
+                    rasterized=True,
+                )
+            else:
+                ax.scatter(
+                    umap_2d[mask, 0],
+                    umap_2d[mask, 1],
+                    c=[colors_curr[label_idx]],
+                    s=point_size,
+                    alpha=0.75,
+                    label=str(label_name) if idx == 0 else None,
+                    rasterized=True,
+                )
+
+        title = f"Epoch {epoch} ({phase})"
+        if snapshot.get("snapshot_type") == "weight_refresh":
+            wr_idx = snapshot.get("weight_refresh_index")
+            if wr_idx is not None:
+                title += f" | refresh#{wr_idx}"
+        if color_mode == "pseudo_cluster":
+            ax.set_title(
+                f"{title} | k={len(unique_curr)}",
+                fontsize=9,
+                fontweight="bold",
+            )
+        else:
+            ax.set_title(title, fontsize=9, fontweight="bold")
         ax.set_xticks([])
+        ax.set_yticks([])
 
-    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("Row-normalized overlap")
-    fig.tight_layout()
+    for idx in range(n_snapshots, n_rows * n_cols):
+        row, col = idx // n_cols, idx % n_cols
+        axes[row][col].axis("off")
+
+    if legend_unique_labels is not None and legend_colors is not None and len(legend_unique_labels) <= 20:
+        handles = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=legend_colors[i],
+                markersize=6,
+                label=str(legend_unique_labels[i]),
+            )
+            for i in range(len(legend_unique_labels))
+        ]
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            ncol=min(len(legend_unique_labels), 8),
+            fontsize=7,
+            bbox_to_anchor=(0.5, -0.02),
+            frameon=True,
+        )
+
+    mode_suffix = {
+        "ground_truth": "Ground Truth",
+        "ground_truth_weighted": "Ground Truth + Cell Weights (Alpha)",
+        "batch": "Batch",
+        "pseudo_cluster": "Pseudo-Clusters",
+    }.get(color_mode, "Ground Truth")
+    proj_suffix = (
+        "shared-UMAP"
+        if projection_mode == "shared" and not shared_umap_fallback
+        else ("shared-fallback-2D" if projection_mode == "shared" else "per-snapshot")
+    )
+    coverage_suffix = f"{n_snapshots}/{len(valid_snapshots_all)} snapshots"
+    fig.suptitle(
+        f"UMAP Evolution - {algorithm_name} ({mode_suffix} | {proj_suffix} | {coverage_suffix})",
+        fontsize=13,
+        fontweight="bold",
+    )
+
+    if params_info or dataset_info:
+        _add_param_annotation(fig, params_info, dataset_info)
+
+    legend_size = len(legend_unique_labels) if legend_unique_labels is not None else 0
+    plt.tight_layout(rect=[0, 0.03 if legend_size <= 20 and legend_size > 0 else 0, 1, 0.96])
+    return fig
+
+
+def plot_marker_overlap_heatmap(
+    overlap_matrix: pd.DataFrame,
+    algorithm_name: str = "Algorithm",
+    figsize: tuple = None,
+) -> Optional[plt.Figure]:
+    """Plot marker-overlap matrix (predicted clusters x gold cell types)."""
+    if overlap_matrix is None or overlap_matrix.empty:
+        return None
+
+    n_rows, n_cols = overlap_matrix.shape
+    if figsize is None:
+        figsize = (max(8, n_cols * 0.9), max(5, n_rows * 0.5))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.heatmap(
+        overlap_matrix,
+        annot=True,
+        fmt=".2f",
+        cmap="YlOrRd",
+        linewidths=0.5,
+        linecolor="lightgray",
+        cbar_kws={"label": "Overlap Score (∩ / 100)"},
+        ax=ax,
+        vmin=0,
+        vmax=1,
+    )
+
+    ax.set_title(
+        f"Marker Gene Overlap - {algorithm_name}\n"
+        "(Predicted Clusters x Gold-Standard Types)",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Gold-Standard Cell Type", fontsize=11)
+    ax.set_ylabel("Predicted Cluster", fontsize=11)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    plt.setp(ax.get_yticklabels(), rotation=0)
+
+    plt.tight_layout()
     return fig

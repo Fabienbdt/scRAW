@@ -87,7 +87,7 @@ class MLPAutoencoder(nn.Module):
         enc: List[nn.Module] = []
         prev = shape.input_dim
         for h in shape.hidden_layers:
-            enc.extend([nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)])
+            enc.extend([nn.Linear(prev, h), nn.BatchNorm1d(h), nn.LeakyReLU(), nn.Dropout(dropout)])
             prev = h
         enc.append(nn.Linear(prev, shape.z_dim))
 
@@ -95,7 +95,7 @@ class MLPAutoencoder(nn.Module):
         dec: List[nn.Module] = []
         prev = shape.z_dim
         for h in reversed(shape.hidden_layers):
-            dec.extend([nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)])
+            dec.extend([nn.Linear(prev, h), nn.BatchNorm1d(h), nn.LeakyReLU(), nn.Dropout(dropout)])
             prev = h
         dec.append(nn.Linear(prev, shape.input_dim))
 
@@ -164,8 +164,8 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
             Valeur calculée par la fonction.
         """
         return AlgorithmInfo(
-            name="enhanced_autoencoder",
-            display_name="Enhanced AE (base)",
+            name="base_autoencoder",
+            display_name="Base AE",
             description="Internal base class used by scRAW.",
             category="deep_learning",
             requires_gpu=False,
@@ -321,6 +321,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
             raise RuntimeError("Model is not initialized.")
         device = torch.device(self.get_device())
         self.model.to(device)
+        was_training = bool(self.model.training)
         self.model.eval()
 
         # Encodage par mini-batch pour limiter la mémoire sur grands jeux de données.
@@ -330,9 +331,17 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 xb = torch.tensor(X[i : i + batch_size], dtype=torch.float32, device=device)
                 zb = self.model.encoder(xb)
                 parts.append(zb.detach().cpu().numpy())
-        if parts:
-            return np.concatenate(parts, axis=0)
-        return np.zeros((0, int(self.params.get("z_dim", 128))), dtype=np.float32)
+        out = (
+            np.concatenate(parts, axis=0)
+            if parts
+            else np.zeros((0, int(self.params.get("z_dim", 128))), dtype=np.float32)
+        )
+
+        # Preserve caller context: _encode_numpy is used during training for
+        # pseudo-label/weight refresh and must not permanently switch to eval mode.
+        if was_training:
+            self.model.train()
+        return out
 
     def fit(self, data: Any, labels: Optional[Any] = None) -> "BaseAutoencoderAlgorithm":
         """Entraîne le modèle sur les données fournies.
@@ -386,9 +395,3 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         if self.model is None:
             return None
         return int(sum(p.numel() for p in self.model.parameters() if p.requires_grad))
-
-
-class EnhancedAutoencoderAlgorithm(BaseAutoencoderAlgorithm):
-    """Backward-compatible alias kept for existing imports."""
-
-    pass

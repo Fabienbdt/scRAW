@@ -100,6 +100,9 @@ def _subprocess_env() -> Dict[str, str]:
     src_dir = Path(__file__).resolve().parents[1]
     prev = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(src_dir) if not prev else f"{src_dir}:{prev}"
+    # Parity with SCRBenchmark Deep2 reference launcher.
+    env.setdefault("NUMBA_DISABLE_JIT", "1")
+    env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     return env
 
 
@@ -119,7 +122,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--preset", default="baron_best", choices=["baron_best", "pancreas_best"])
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--snapshot-interval", type=int, default=20)
+    p.add_argument("--snapshot-interval", type=int, default=10)
     p.add_argument("--only", default="", help="Comma-separated subset of experiment names")
     p.add_argument("--metrics-only", action="store_true")
     p.add_argument("--dry-run", action="store_true")

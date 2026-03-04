@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .metrics import align_labels, compute_metrics
+from .metrics import align_labels, compute_metrics, marker_overlap_annotation
 from .presets import PRESETS, get_preset
 from .preprocessing import preprocess_adata
 
@@ -54,6 +54,9 @@ def _configure_runtime_cache(output_dir: Path) -> None:
     os.environ.setdefault("NUMBA_CACHE_DIR", str(numba_dir))
     os.environ.setdefault("MPLCONFIGDIR", str(mpl_dir))
     os.environ.setdefault("XDG_CACHE_HOME", str(xdg_dir))
+    # Parity with reference SCRBenchmark scripts (Deep2 baseline).
+    os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
 def _detect_label_key(obs_columns: Sequence[str]) -> Optional[str]:
@@ -66,13 +69,19 @@ def _detect_label_key(obs_columns: Sequence[str]) -> Optional[str]:
     Returns:
         Valeur calculée par la fonction.
     """
+    # Keep same priority as SCRBenchmark DataHandler.LABEL_COLUMNS.
     candidates = [
-        "cell_type",
-        "celltype",
-        "cell_types",
         "Group",
-        "labels",
         "label",
+        "cell_type",
+        "cluster",
+        "Groupe",
+        "Y",
+        "celltype",
+        "CellType",
+        "cell_types",
+        "labels",
+        "clusters",
         "assigned_cluster",
     ]
     for c in candidates:
@@ -243,6 +252,15 @@ def _parse_kv_overrides(items: Sequence[str]) -> Dict[str, Any]:
         key = key.strip()
         if not key:
             raise ValueError(f"Invalid override '{raw}'. Empty key.")
+        # Compatibility with legacy SCRBenchmark syntax: "scraw:param=value"
+        # (and similar namespace prefixes for preprocess overrides).
+        if ":" in key:
+            ns, bare_key = key.split(":", 1)
+            ns = ns.strip().lower()
+            if ns in {"scraw", "algorithm", "algo", "preprocess"}:
+                key = bare_key.strip()
+                if not key:
+                    raise ValueError(f"Invalid override '{raw}'. Empty key after namespace.")
         out[key] = _parse_scalar(value)
     return out
 
@@ -292,7 +310,7 @@ def _build_scraw_params(
         params["use_batch_conditioning"] = False
         params["adversarial_batch_weight"] = 0.0
         params["mmd_batch_weight"] = 0.0
-        params.pop("batch_correction_key", None)
+        params["batch_correction_key"] = str(params.get("batch_correction_key", "auto") or "auto")
     elif dann_mode == "on":
         params["use_batch_conditioning"] = True
 
@@ -414,8 +432,12 @@ def run_once(args: argparse.Namespace) -> int:
     results_dir = output / "results"
     labels_dir = results_dir / "labels"
     loss_dir = results_dir / "loss_history"
-    for p in (config_dir, data_dir, figures_dir, results_dir, labels_dir, loss_dir):
+    save_processed_data = str(getattr(args, "save_processed_data", "off")).lower() == "on"
+
+    for p in (config_dir, figures_dir, results_dir, labels_dir, loss_dir):
         p.mkdir(parents=True, exist_ok=True)
+    if save_processed_data:
+        data_dir.mkdir(parents=True, exist_ok=True)
 
     _configure_runtime_cache(output)
 
@@ -453,7 +475,10 @@ def run_once(args: argparse.Namespace) -> int:
 
     logger.info("Applying preprocessing...")
     adata_proc = preprocess_adata(adata, preprocess_cfg)
-    adata_proc.write(data_dir / "processed.h5ad")
+    if save_processed_data:
+        adata_proc.write(data_dir / "processed.h5ad")
+    else:
+        logger.info("Skipping export of processed.h5ad (save_processed_data=off).")
 
     label_key = _detect_label_key(list(adata_proc.obs.columns))
     batch_key = _detect_batch_key(
@@ -589,6 +614,7 @@ def run_once(args: argparse.Namespace) -> int:
             "n_repeats": 1,
             "random_seed": args.seed,
             "compute_scib_metrics": False,
+            "save_processed_data": save_processed_data,
         },
         "output": {"directory": str(output)},
         "context": {
@@ -634,23 +660,69 @@ def run_once(args: argparse.Namespace) -> int:
     if not args.metrics_only and embeddings is not None and len(embeddings) == len(pred_labels):
         logger.info("Generating figures...")
 
+        reverse_label_map: Optional[Dict[int, str]] = None
+        if label_map:
+            reverse_label_map = {}
+            for k, v in label_map.items():
+                try:
+                    reverse_label_map[int(k)] = str(v)
+                except Exception:
+                    continue
+
+        params_info = {
+            "normalization": effective_params.get("nb_input_transform", "log1p"),
+            "DANN_weight": effective_params.get("adversarial_batch_weight", 0),
+            "MMD_weight": effective_params.get("mmd_batch_weight", 0),
+            "clustering": effective_params.get("clustering_method", "hdbscan"),
+            "HVG_flavor": effective_params.get("internal_hvg_flavor", "seurat"),
+            "epochs": effective_params.get("epochs", "?"),
+            "z_dim": effective_params.get("z_dim", "?"),
+        }
+        dataset_info = f"{data_path.stem} | Full data"
+
         if true_labels_raw is not None and len(true_labels_raw) == len(pred_labels):
             fig = plot_umap_comparison(
                 embeddings=embeddings,
                 true_labels=true_labels_raw,
                 predicted_labels=pred_labels,
-                title="scRAW - Ground Truth vs Prediction",
+                algorithm_name="scraw",
+                label_names=reverse_label_map,
+                params_info=params_info,
+                dataset_info=dataset_info,
             )
             fig.savefig(figures_dir / "umap_comparison_scraw.png", bbox_inches="tight", dpi=150)
             plt.close(fig)
 
-            fig_hm = plot_marker_overlap_heatmap(
-                true_labels=true_labels_raw,
-                pred_labels=pred_labels,
-                title="scRAW - Label/Cluster Overlap",
-            )
-            fig_hm.savefig(figures_dir / "marker_overlap_heatmap_scraw.png", bbox_inches="tight", dpi=150)
-            plt.close(fig_hm)
+            try:
+                overlap_result = marker_overlap_annotation(
+                    adata=adata_proc,
+                    labels_true=true_labels_raw,
+                    labels_pred=pred_labels,
+                    n_top_genes=100,
+                    method="wilcoxon",
+                )
+                fig_hm = plot_marker_overlap_heatmap(
+                    overlap_matrix=overlap_result["overlap_matrix"],
+                    algorithm_name="scraw",
+                )
+                if fig_hm is not None:
+                    fig_hm.savefig(figures_dir / "marker_overlap_heatmap_scraw.png", bbox_inches="tight", dpi=150)
+                    plt.close(fig_hm)
+
+                import pandas as pd
+
+                annot_df = pd.DataFrame(
+                    {
+                        "true_label": np.asarray(true_labels_raw, dtype=str),
+                        "predicted_cluster": np.asarray(pred_labels, dtype=str),
+                        "hungarian_annotation": np.asarray(overlap_result["hungarian_labels"], dtype=str),
+                        "marker_overlap_annotation": np.asarray(overlap_result["marker_labels"], dtype=str),
+                    }
+                )
+                annot_df.to_csv(results_dir / "annotation_comparison_scraw.csv", index=False)
+                overlap_result["overlap_matrix"].to_csv(results_dir / "marker_overlap_matrix_scraw.csv")
+            except Exception as exc:
+                logger.warning("Marker-overlap annotation failed for scraw: %s", exc)
 
         if batch_key is not None and batch_key in adata_proc.obs.columns:
             batch_labels = adata_proc.obs[batch_key].astype(str).to_numpy()
@@ -658,7 +730,9 @@ def run_once(args: argparse.Namespace) -> int:
                 fig_b = plot_umap_batch(
                     embeddings=embeddings,
                     batch_labels=batch_labels,
-                    title=f"scRAW - Batch ({batch_key})",
+                    title=f"scraw (Batch: {batch_key})",
+                    params_info=params_info,
+                    dataset_info=dataset_info,
                 )
                 fig_b.savefig(figures_dir / "umap_batch_scraw.png", bbox_inches="tight", dpi=150)
                 plt.close(fig_b)
@@ -670,7 +744,10 @@ def run_once(args: argparse.Namespace) -> int:
                 embeddings=embeddings,
                 labels=labels_for_weight_plot,
                 cell_weights=weights,
-                title="scRAW - Weighted UMAP (alpha)",
+                title="scraw (Cell Weights)",
+                label_names=reverse_label_map,
+                params_info=params_info,
+                dataset_info=dataset_info,
             )
             fig_w.savefig(figures_dir / "umap_scraw_weighted.png", bbox_inches="tight", dpi=150)
             plt.close(fig_w)
@@ -678,7 +755,9 @@ def run_once(args: argparse.Namespace) -> int:
             fig_wg = plot_umap_weighted_gradient(
                 embeddings=embeddings,
                 cell_weights=weights,
-                title="scRAW - Weighted UMAP (gradient)",
+                title="scraw (Cell Weights Gradient)",
+                params_info=params_info,
+                dataset_info=dataset_info,
             )
             fig_wg.savefig(figures_dir / "umap_scraw_weighted_gradient.png", bbox_inches="tight", dpi=150)
             plt.close(fig_wg)
@@ -686,15 +765,17 @@ def run_once(args: argparse.Namespace) -> int:
         if snapshots:
             labels_for_evo = true_labels_raw if true_labels_raw is not None else pred_labels
             fig_evo = plot_umap_evolution(
-                snapshots=snapshots,
+                embedding_snapshots=snapshots,
                 labels=labels_for_evo,
-                title="scRAW - UMAP Evolution",
+                algorithm_name="scraw",
+                params_info=params_info,
+                dataset_info=dataset_info,
             )
             if fig_evo is not None:
                 fig_evo.savefig(figures_dir / "umap_evolution_scraw_run0.png", bbox_inches="tight", dpi=150)
                 plt.close(fig_evo)
 
-        fig_loss = plot_loss_curves(loss_history, title="scRAW - Loss Curves")
+        fig_loss = plot_loss_curves(loss_history, algorithm_name="scraw")
         if fig_loss is not None:
             fig_loss.savefig(figures_dir / "loss_curves_scraw_run0.png", bbox_inches="tight", dpi=150)
             plt.close(fig_loss)
@@ -719,6 +800,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", required=True, help="Output directory")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="auto", help="auto|cuda|cpu|mps")
+    p.add_argument(
+        "--save-processed-data",
+        choices=["on", "off"],
+        default="off",
+        help="Save data/processed.h5ad in output directory (default: off)",
+    )
     p.add_argument("--metrics-only", action="store_true", help="Skip figure generation")
     p.add_argument("--unsupervised", action="store_true", help="Hide labels during training")
     p.add_argument("--dann", choices=["auto", "on", "off"], default="auto")

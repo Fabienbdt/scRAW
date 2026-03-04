@@ -1,4 +1,4 @@
-# scraw_dedicated
+# scraw
 
 Projet autonome et allégé pour entraîner **scRAW** sur fichiers `.h5ad`.
 
@@ -17,14 +17,18 @@ scraw_dedicated/
   REFERENCE_RUNS.md
   run_scraw_dedicated.py
   run_seed_robustness.py
+  run_hyperparam_search.py
   scripts/
     run_single.py
     run_seed_robustness.py
     run_deep2_sweep.py
+    run_hyperparam_search.py
+    nohup_run_hyperparam_search.sh
   src/scraw_dedicated/
     cli.py
     deep2_sweep.py
     seed_robustness.py
+    hyperparam_search.py
     presets.py
     preprocessing.py
     metrics.py
@@ -34,7 +38,6 @@ scraw_dedicated/
       scraw_losses_and_weights.py
       scraw_clustering.py
       scraw_algorithm.py        # orchestration principale scRAW
-      enhanced_autoencoder.py   # wrapper compat
       scRAW.py                  # wrapper compat
     core/
       algorithm_registry.py
@@ -57,6 +60,12 @@ scraw_dedicated/
   - Entrées: dataset `.h5ad`, preset, liste de seeds.
   - Sorties: un dossier par seed + `seed_metrics.csv` + `seed_aggregate.json`.
 
+- `run_hyperparam_search.py`
+  - Utilité: lancer une **recherche d'hyperparamètres complète** (baseline + single-param + pairwise + batch correction).
+  - Quand l'utiliser: explorer systématiquement les hyperparamètres clés et classer automatiquement les meilleurs runs.
+  - Entrées: dataset `.h5ad`, preset, dossier de sortie.
+  - Sorties: arborescence `runs/`, logs structurés, `summaries/all_runs_metrics.csv`, `ranked_by_score.csv`, `best_by_group.csv`.
+
 ### Scripts dans `scripts/` (wrappers explicites)
 
 - `scripts/run_single.py`
@@ -72,6 +81,15 @@ scraw_dedicated/
   - Quand l'utiliser: comparaison systématique des variantes.
   - Entrées: dataset Baron, dossier de sortie sweep, éventuellement `--only`.
   - Sorties: un dossier par expérience + `summary.csv` global.
+
+- `scripts/run_hyperparam_search.py`
+  - Wrapper de `run_hyperparam_search.py`.
+  - Même logique de recherche complète, pratique pour les exécutions scriptées.
+
+- `scripts/nohup_run_hyperparam_search.sh`
+  - Lance la recherche complète en arrière-plan via `nohup`.
+  - Force le mode métriques uniquement (`--metrics-only`) pour accélérer les sweeps.
+  - Organise les résultats automatiquement dans `results/hparam_search/<preset>_<dataset>_metrics_only_<timestamp>/`.
 
 ### Modules internes (`src/scraw_dedicated/`)
 
@@ -113,14 +131,15 @@ scraw_dedicated/
 - `scraw_algorithm.py`
   - Rôle: orchestration complète de l'entraînement scRAW (fit/predict).
 
-- `enhanced_autoencoder.py` et `scRAW.py`
-  - Rôle: wrappers de compatibilité pour anciens imports.
+- `scRAW.py`
+  - Rôle: wrapper de compatibilité pour anciens imports.
 
 ## Workflow recommandé
 
 1. `run_scraw_dedicated.py` pour valider un run unique.
 2. `run_seed_robustness.py` pour vérifier la stabilité inter-seeds.
 3. `scripts/run_deep2_sweep.py` pour comparer plusieurs ablations sur un même dataset.
+4. `scripts/nohup_run_hyperparam_search.sh` pour une exploration hyperparamètres complète en long run.
 
 ## Ce qui a été simplifié
 
@@ -189,6 +208,35 @@ python scripts/run_deep2_sweep.py \
   --only baseline_trip10_s35,baseline_true_unsupervised,ablate_triplet,ablate_reco_cluster,ablate_reco_density
 ```
 
+### 4) Recherche hyperparamètres complète (métriques uniquement)
+
+Exécution directe:
+
+```bash
+python run_hyperparam_search.py \
+  --preset baron_best \
+  --data /chemin/baron_human_pancreas.h5ad \
+  --output-root /chemin/output_hparam_search \
+  --device cpu
+```
+
+Exécution en arrière-plan `nohup` (recommandé pour runs longs):
+
+```bash
+bash scripts/nohup_run_hyperparam_search.sh
+```
+
+Exemple avec variables explicites:
+
+```bash
+PRESET=baron_best \
+DATA_PATH=/Users/fabienbidet/Documents/MASTER\ 2/STAGE/SCRBenchmark/data/baron_human_pancreas.h5ad \
+DEVICE=cpu \
+  SEARCH_GROUPS=baseline,single,pairwise,batch \
+MAX_RUNS=0 \
+bash scripts/nohup_run_hyperparam_search.sh
+```
+
 ## Presets
 
 - `baron_best`: preset Baron validé (baseline trip10_s35)
@@ -217,4 +265,5 @@ Pour chaque run:
 python scripts/run_single.py --help
 python scripts/run_seed_robustness.py --help
 python scripts/run_deep2_sweep.py --help
+python scripts/run_hyperparam_search.py --help
 ```

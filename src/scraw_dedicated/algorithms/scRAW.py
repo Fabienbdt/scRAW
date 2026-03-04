@@ -1,4 +1,4 @@
-"""Compatibility wrapper around the new scraw_algorithm module."""
+"""Deep2-focused scRAW entrypoint (kept for backward-compatible imports)."""
 
 from .scraw_algorithm import ScRAWAlgorithm
 
