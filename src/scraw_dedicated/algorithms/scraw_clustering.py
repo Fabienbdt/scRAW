@@ -1,4 +1,12 @@
-"""Clustering and pseudo-label helpers used by scRAW (deep2-focused)."""
+"""Clustering and pseudo-label helpers used by scRAW (deep2-focused).
+
+Two distinct clustering stages are implemented here:
+1) pseudo-labeling during training (for dynamic weighting + triplet loss),
+2) final clustering on the converged latent space (HDBSCAN + fallbacks).
+
+This split is intentional: pseudo-labels are optimization scaffolding, while
+final labels are the output exposed by the algorithm.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 def remap_contiguous_labels(labels: np.ndarray) -> np.ndarray:
-    """Remap arbitrary cluster ids to contiguous ids 0..K-1."""
+    """Remap arbitrary cluster ids to contiguous ids 0..K-1.
+
+    Keeps ordering deterministic by sorting unique label values before remap.
+    """
     labels = np.asarray(labels)
     uniq = sorted(np.unique(labels).tolist())
     mapping = {int(v): i for i, v in enumerate(uniq)}
@@ -20,16 +31,25 @@ def remap_contiguous_labels(labels: np.ndarray) -> np.ndarray:
 
 
 class ScrawClusteringMixin:
-    """Pseudo-label + final clustering routines used by the deep2 workflow."""
+    """Pseudo-label + final clustering routines used by the deep2 workflow.
+
+    This mixin deliberately isolates clustering heuristics from the main
+    training loop so they can be audited or changed without touching the
+    optimizer/reconstruction code path.
+    """
 
     _pseudo_fallback_method: Optional[str]
     _leiden_warning_emitted: bool
 
     def _param(self, key: str, default: Any) -> Any:  # pragma: no cover
+        """Read one algorithm parameter, delegating to the concrete parent class."""
         raise NotImplementedError
 
     def _clip_k_to_data(self, k: int, n_cells: int) -> int:
         """Clip k to valid bounds for the dataset size."""
+        # Borne de sécurité:
+        # - K >= 2 (sinon clustering trivial),
+        # - K <= n_cells-1 pour éviter les cas dégénérés.
         n_cells = int(max(1, n_cells))
         if n_cells == 1:
             return 1
@@ -49,7 +69,11 @@ class ScrawClusteringMixin:
         return self._clip_k_to_data(k_est, n_cells)
 
     def _build_unsupervised_k_candidates(self, n_cells: int) -> List[int]:
-        """Build bounded candidate grid for stability-consensus K selection."""
+        """Build bounded candidate grid for stability-consensus K selection.
+
+        If full `[k_min, k_max]` is too large, use an evenly spaced subset that
+        still includes both bounds.
+        """
         n_cells = int(max(1, n_cells))
         k_min = int(max(2, self._param("unsupervised_k_min", 8)))
         k_max = int(max(2, self._param("unsupervised_k_max", 30)))
@@ -66,6 +90,7 @@ class ScrawClusteringMixin:
         if len(full_grid) <= max_candidates:
             return full_grid
 
+        # Sous-échantillonnage uniforme de la grille pour limiter le coût.
         sampled = np.linspace(k_min, k_max, num=max_candidates)
         candidates = sorted(set(int(round(v)) for v in sampled))
         candidates = [k for k in candidates if 2 <= k <= k_max]
@@ -84,6 +109,7 @@ class ScrawClusteringMixin:
         pca_dim = int(self._param("unsupervised_k_pca_dim", 32))
         max_components = int(min(emb.shape[1], max(1, emb.shape[0] - 1)))
         if pca_dim <= 1 or max_components <= 2 or emb.shape[1] <= pca_dim:
+            # Si la réduction n'apporte rien, on garde l'embedding d'origine.
             return emb
 
         from sklearn.decomposition import PCA
@@ -115,6 +141,7 @@ class ScrawClusteringMixin:
         n_init = int(max(1, n_init))
 
         if n_samples > 15000:
+            # MiniBatchKMeans pour les gros jeux: plus rapide, un peu moins précis.
             batch_size = int(min(2048, max(256, n_samples // 20)))
             model = MiniBatchKMeans(
                 n_clusters=n_clusters,
@@ -147,6 +174,7 @@ class ScrawClusteringMixin:
         n = len(ordered)
         if n == 1:
             return {ordered[0][0]: 1.0}
+        # Le meilleur reçoit 1.0, le moins bon 0.0.
         return {
             int(k): float(1.0 - (idx / float(n - 1)))
             for idx, (k, _) in enumerate(ordered)
@@ -157,7 +185,17 @@ class ScrawClusteringMixin:
         embeddings: np.ndarray,
         n_cells: int,
     ) -> int:
-        """Select K with weighted consensus of stability + internal CVIs."""
+        """Select K with weighted consensus of stability + internal CVIs.
+
+        For each candidate K:
+        - compute internal quality metrics (silhouette, CH, DB),
+        - estimate run-to-run stability (mean pairwise ARI across repeated KMeans),
+        - penalize excessive tiny clusters,
+        - apply over/under-segmentation penalty versus a heuristic anchor K.
+
+        Final score is a weighted rank-consensus, then highest score wins
+        (tie-break: smallest K).
+        """
         from sklearn.metrics import (
             adjusted_rand_score,
             calinski_harabasz_score,
@@ -213,6 +251,7 @@ class ScrawClusteringMixin:
                 continue
 
             try:
+                # Internal CVI metrics are evaluated on a fixed subsample for speed.
                 labels_eval = self._fit_kmeans_for_k_selection(
                     X=emb_eval,
                     n_clusters=k,
@@ -229,11 +268,13 @@ class ScrawClusteringMixin:
                 metric_ch[k] = float(calinski_harabasz_score(emb_eval, labels_eval))
                 metric_db[k] = float(davies_bouldin_score(emb_eval, labels_eval))
             except Exception:
+                # Si un K échoue (numérique ou convergence), on le saute.
                 continue
 
             run_labels: List[np.ndarray] = []
             for run_id in range(stability_runs):
                 try:
+                    # Stability uses several KMeans runs with distinct seeds.
                     labels_run = self._fit_kmeans_for_k_selection(
                         X=emb_stab,
                         n_clusters=k,
@@ -254,6 +295,7 @@ class ScrawClusteringMixin:
                     metric_stability[k] = float(np.mean(pairwise_ari))
 
         if not metric_sil:
+            # Aucun K valide: fallback robuste sur l'heuristique simple.
             return self._estimate_unsupervised_k_heuristic(n_cells)
 
         score_stability = self._rank_scores(metric_stability, higher_is_better=True)
@@ -274,6 +316,7 @@ class ScrawClusteringMixin:
         scored_k: Dict[int, float] = {}
         valid_ks = sorted(set(metric_sil.keys()) | set(metric_stability.keys()) | set(metric_ch.keys()) | set(metric_db.keys()))
         for k in valid_ks:
+            # Moyenne pondérée des scores de rang disponibles pour ce K.
             weighted_sum = 0.0
             weight_sum = 0.0
             if k in score_stability:
@@ -295,6 +338,8 @@ class ScrawClusteringMixin:
             if weight_sum <= 0:
                 continue
 
+            # Use a scale-free penalty around the anchor heuristic to avoid
+            # pathological over/under-segmentation when metrics are noisy.
             raw_score = float(weighted_sum / weight_sum)
             over_ratio = max(0.0, (float(k) - float(k_anchor)) / max(1.0, float(k_anchor)))
             under_ratio = max(0.0, (float(k_anchor) - float(k)) / max(1.0, float(k_anchor)))
@@ -306,21 +351,32 @@ class ScrawClusteringMixin:
 
         best_score = max(scored_k.values())
         tied = [k for k, s in scored_k.items() if abs(s - best_score) <= 1e-12]
+        # Tie-break conservateur: choisir le plus petit K.
         best_k = int(min(tied))
         return self._clip_k_to_data(best_k, n_cells)
 
     def _estimate_k(self, n_cells: int, embeddings: Optional[np.ndarray] = None) -> int:
-        """Estimate pseudo-label K from user config, fallback, or automatic selection."""
+        """Estimate pseudo-label K from user config, fallback, or automatic selection.
+
+        Priority order:
+        1) pre-resolved `_pseudo_n_clusters`,
+        2) explicit `n_clusters`,
+        3) manual unsupervised fallback,
+        4) automatic unsupervised strategy (`stability_consensus` or heuristic).
+        """
         k_effective = int(self._param("_pseudo_n_clusters", 0) or 0)
         if k_effective > 1:
+            # K déjà résolu en amont (ex: labels supervisés disponibles).
             return self._clip_k_to_data(k_effective, n_cells)
 
         k_user = int(self._param("n_clusters", 0) or 0)
         if k_user > 1:
+            # K explicitement fixé par l'utilisateur.
             return self._clip_k_to_data(k_user, n_cells)
 
         manual_k = int(self._param("unsupervised_k_fallback", 0) or 0)
         if manual_k > 1:
+            # Fallback manuel prioritaire sur les stratégies automatiques.
             k = self._clip_k_to_data(manual_k, n_cells)
             self.params["unsupervised_k_selected"] = int(k)
             self.params["unsupervised_k_selection_mode"] = "manual_fallback"
@@ -331,6 +387,7 @@ class ScrawClusteringMixin:
             mode = "stability_consensus"
 
         if mode == "heuristic" or embeddings is None:
+            # Sans embedding (ou mode forcé), on ne peut pas scorer stabilité/CVI.
             k = self._estimate_unsupervised_k_heuristic(n_cells)
             self.params["unsupervised_k_selected"] = int(k)
             self.params["unsupervised_k_selection_mode"] = (
@@ -344,6 +401,7 @@ class ScrawClusteringMixin:
             self.params["unsupervised_k_selection_mode"] = "stability_consensus"
             return self._clip_k_to_data(k, n_cells)
         except Exception:
+            # Erreur dans le consensus -> repli simple et traçable.
             k = self._estimate_unsupervised_k_heuristic(n_cells)
             self.params["unsupervised_k_selected"] = int(k)
             self.params["unsupervised_k_selection_mode"] = "heuristic_after_failure"
@@ -362,7 +420,11 @@ class ScrawClusteringMixin:
         return remap_contiguous_labels(labels)
 
     def _leiden_pseudo_labels(self, embeddings: np.ndarray, target_k: int) -> np.ndarray:
-        """Compute Leiden pseudo-labels with resolution search toward target_k."""
+        """Compute Leiden pseudo-labels with resolution search toward target_k.
+
+        Resolution is scanned on a coarse fixed grid and the closest cluster
+        count is selected; exact target match stops early.
+        """
         import anndata as ad
         import scanpy as sc
 
@@ -375,6 +437,7 @@ class ScrawClusteringMixin:
         rs = int(self._param("seed", 42))
 
         n_neighbors = min(15, n_cells - 1)
+        # Graphe des voisins sur l'embedding latent.
         sc.pp.neighbors(
             adata,
             n_neighbors=n_neighbors,
@@ -387,6 +450,7 @@ class ScrawClusteringMixin:
         k_eff = max(2, min(int(target_k), n_cells - 1))
         best_res, best_diff = 1.0, n_cells
         for res in np.arange(0.05, 3.0, 0.05):
+            # Balayage de résolution: on cherche le nombre de clusters le plus proche de target_k.
             sc.tl.leiden(adata, resolution=float(res), random_state=rs)
             n_found = len(np.unique(adata.obs["leiden"].astype(int).values))
             diff = abs(n_found - k_eff)
@@ -400,10 +464,15 @@ class ScrawClusteringMixin:
         return adata.obs["leiden"].astype(int).values.astype(np.int64)
 
     def _pseudo_labels(self, embeddings: np.ndarray) -> np.ndarray:
-        """Compute pseudo-labels used for dynamic weighting and triplet loss."""
+        """Compute pseudo-labels used for dynamic weighting and triplet loss.
+
+        If Leiden fails once, fallback is persisted to KMeans for the rest of
+        the run to avoid repeated expensive failures inside training loops.
+        """
         embeddings = self._sanitize_embeddings(embeddings)
         method = str(self._param("pseudo_label_method", "leiden")).strip().lower()
         if self._pseudo_fallback_method is not None:
+            # Fallback "sticky": une fois Leiden cassé, on reste en KMeans.
             method = self._pseudo_fallback_method
         if method not in {"leiden", "kmeans"}:
             method = "kmeans"
@@ -432,12 +501,21 @@ class ScrawClusteringMixin:
             return arr
         non_finite = ~np.isfinite(arr)
         if np.any(non_finite):
+            # Valeurs non finies remplacées avant calcul de distances.
             arr = np.nan_to_num(arr, nan=0.0, posinf=1e4, neginf=-1e4)
         arr = np.clip(arr, -1e4, 1e4).astype(np.float32, copy=False)
         return arr
 
     def _hdbscan_clustering(self, embeddings: np.ndarray) -> np.ndarray:
-        """Apply final HDBSCAN clustering on latent embeddings."""
+        """Apply final HDBSCAN clustering on latent embeddings.
+
+        Safety pipeline:
+        - sanitize embeddings,
+        - run HDBSCAN,
+        - fallback to Leiden/KMeans on failure or degenerate partition,
+        - optionally reassign noise points,
+        - remap labels to contiguous ids.
+        """
         min_cluster_size = max(2, int(self._param("hdbscan_min_cluster_size", 4) or 4))
         min_samples = max(1, int(self._param("hdbscan_min_samples", 2) or 2))
         if min_samples > min_cluster_size:
@@ -459,9 +537,11 @@ class ScrawClusteringMixin:
         reassign_noise = bool(self._param("hdbscan_reassign_noise", True))
 
         emb = self._sanitize_embeddings(embeddings)
+        # K de secours utilisé uniquement si HDBSCAN échoue.
         k_fallback = self._estimate_k(emb.shape[0], embeddings=emb)
 
         def _fallback_to_leiden(reason: str) -> np.ndarray:
+            """Fallback path when HDBSCAN fails or returns a degenerate partition."""
             logger.warning("HDBSCAN fallback to Leiden (%s).", reason)
             try:
                 labels_fb = self._leiden_pseudo_labels(emb, target_k=k_fallback)
@@ -473,6 +553,7 @@ class ScrawClusteringMixin:
         try:
             import hdbscan as hdbscan_lib
 
+            # Exécution principale du clustering final.
             clusterer = hdbscan_lib.HDBSCAN(
                 min_cluster_size=min_cluster_size,
                 min_samples=min_samples,
@@ -486,6 +567,7 @@ class ScrawClusteringMixin:
 
         n_found = int(np.sum(np.unique(labels) >= 0))
         if n_found <= 1:
+            # Clustering final inutilisable: on force un fallback exploitable.
             return _fallback_to_leiden(f"degenerate result (n_clusters={n_found})")
 
         if reassign_noise and np.any(labels < 0):
@@ -493,6 +575,7 @@ class ScrawClusteringMixin:
 
         if np.any(labels < 0):
             labels = labels.copy()
+            # Dernier filet de sécurité: convertir tout bruit restant en cluster dédié.
             labels[labels < 0] = int(labels[labels >= 0].max()) + 1 if np.any(labels >= 0) else 0
 
         labels = remap_contiguous_labels(labels)
@@ -500,7 +583,10 @@ class ScrawClusteringMixin:
         return remap_contiguous_labels(labels)
 
     def _reassign_noise_to_centroids(self, embeddings: np.ndarray, labels: np.ndarray) -> np.ndarray:
-        """Reassign HDBSCAN noise points to nearest non-noise centroid."""
+        """Reassign HDBSCAN noise points to nearest non-noise centroid.
+
+        If all points are noise, fallback directly to KMeans pseudo-labels.
+        """
         labels = np.asarray(labels, dtype=np.int64).copy()
         keep = labels >= 0
         if not np.any(keep):
@@ -513,12 +599,17 @@ class ScrawClusteringMixin:
 
         noise_idx = np.where(labels < 0)[0]
         for i in noise_idx:
+            # Réassignation par centroïde le plus proche (distance euclidienne).
             d = np.sum((centroids - embeddings[i]) ** 2, axis=1)
             labels[i] = int(uniq[int(np.argmin(d))])
         return labels
 
     def _merge_close_hdbscan_siblings(self, embeddings: np.ndarray, labels: np.ndarray) -> np.ndarray:
-        """Merge one obviously over-segmented close cluster pair (if any)."""
+        """Merge one obviously over-segmented close cluster pair (if any).
+
+        Disabled by default. This post-processing is conservative and merges
+        at most one pair to limit accidental topology distortion.
+        """
         # Disabled by default to keep a conservative post-processing behavior.
         enable = bool(self._param("hdbscan_merge_close_clusters", False))
         if not enable:
@@ -559,6 +650,7 @@ class ScrawClusteringMixin:
         for i, ca in enumerate(keys):
             for cb in keys[i + 1 :]:
                 d_ab = float(np.sqrt(np.sum((centroids[ca] - centroids[cb]) ** 2)))
+                # Ratio < 1 => centres proches relativement à la dispersion interne.
                 ratio = d_ab / (radii[ca] + radii[cb])
                 if ratio < best_ratio:
                     best_ratio = ratio

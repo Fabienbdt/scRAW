@@ -1,0 +1,355 @@
+% =============================================================================
+% Document compilable avec: pdflatex scRAW_Scientific_Paper.tex
+% =============================================================================
+\documentclass[10pt,twocolumn,a4paper]{article}
+
+% --- Packages ----------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{mathptmx} % Police style Times, classique pour les papiers
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{geometry}
+\geometry{a4paper, margin=1.6cm, columnsep=0.7cm}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows, arrows.meta, positioning, fit, calc, backgrounds, decorations.pathreplacing, patterns, matrix}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{abstract}
+\usepackage{titlesec}
+
+% --- Custom colors -----------------------------------------------------------
+\definecolor{noteblue}{HTML}{0969DA}
+\definecolor{latentcolor}{HTML}{FF9800}
+\definecolor{phaseblue}{HTML}{1565C0}
+\definecolor{phaseorange}{HTML}{E65100}
+\definecolor{phasegreen}{HTML}{2E7D32}
+\definecolor{dannred}{HTML}{C62828}
+\definecolor{weightpurple}{HTML}{6A1B9A}
+\definecolor{tripletyellow}{HTML}{F9A825}
+\definecolor{nbblue}{HTML}{1976D2}
+\definecolor{enccolor}{HTML}{1E88E5}
+\definecolor{deccolor}{HTML}{E53935}
+\definecolor{clustergreen}{HTML}{43A047}
+\definecolor{successgreen}{HTML}{388E3C}
+
+% --- Hyperref setup ----------------------------------------------------------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=noteblue,
+  urlcolor=noteblue,
+  citecolor=noteblue,
+}
+
+% --- Formatting --------------------------------------------------------------
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries\itshape}{\thesubsection.}{0.5em}{}
+
+% --- Title -------------------------------------------------------------------
+\title{\vspace{-1.5cm}\LARGE\textbf{scRAW: Single-Cell Rare-population Autoencoder Weighting\\Un Cadre Algorithmique pour l'Identification de Populations Cellulaires Rares}}
+\author{\normalsize Équipe SCRBenchmark \\ \normalsize \textit{Institut de Recherche en Bio-informatique} \\ \normalsize \textit{Mars 2026}}
+\date{}
+
+\begin{document}
+
+\twocolumn[
+  \begin{@twocolumnfalse}
+    \maketitle
+    \begin{abstract}
+      \noindent L'analyse de données de séquençage d'ARN en cellule unique (scRNA-seq) offre une résolution sans précédent de l'hétérogénéité cellulaire au sein des tissus complexes. Cependant, l'identification de populations cellulaires rares, telles que les cellules souches, les cellules immunitaires transitoires ou les sous-clones tumoraux, reste un défi algorithmique majeur en raison de la haute dimensionnalité des données, de leur forte sparsité (dropouts) et du déséquilibre extrême des classes. Dans cet article, nous présentons en détail l'architecture et les fondements mathématiques de \textbf{scRAW} (Single-Cell Rare-population Autoencoder Weighting), un autoencodeur déterministe conçu spécifiquement pour exacerber les signaux de ces populations minoritaires. scRAW innove par la combinaison de plusieurs mécanismes : une modélisation probabiliste de reconstruction via une distribution Négative Binomiale, une stratégie d'entraînement en deux phases intégrant un masquage stochastique, et surtout, un système original de pondération dynamique bicritère (fréquence et densité) couplé à une régularisation locale par Triplet Loss. L'espace latent déterministe généré par scRAW est ensuite directement exploité par l'algorithme de clustering hiérarchique HDBSCAN, permettant une détection robuste des micro-clusters cellulaires sans nécessiter de réduction de dimensionnalité post-hoc.
+      \vspace{0.8cm}
+    \end{abstract}
+  \end{@twocolumnfalse}
+]
+
+% =============================================================================
+\section{Introduction}
+% =============================================================================
+
+L'émergence et la démocratisation des technologies de séquençage d'ARN en cellule unique (scRNA-seq) ont profondément transformé la biologie computationnelle. En permettant de quantifier l'expression transcriptomique à l'échelle de la cellule individuelle, ces technologies offrent une vue détaillée de la composition des tissus complexes. Néanmoins, la nature intrinsèque des données scRNA-seq pose des défis de taille pour l'apprentissage automatique : une très haute dimensionnalité (plusieurs dizaines de milliers de gènes), une abondance de zéros techniques dus aux défaillances de capture de l'ARNm (phénomène de \textit{dropout}), et un bruit technique important.
+
+Parmi les objectifs analytiques cruciaux figure l'identification de populations cellulaires rares. Biologiquement, ces populations, bien que numériquement négligeables, jouent souvent un rôle déterminant dans le développement, l'immunité ou la pathogénèse. Algorithmiquement, les méthodes de réduction de dimensionnalité et de clustering non supervisé classiques ont tendance à écraser les signaux de ces cellules rares, les assimilant à du bruit ou les fusionnant par erreur avec des clusters de populations majoritaires voisines. Les fonctions de perte standards, telles que l'Erreur Quadratique Moyenne (MSE) ou l'Entropie Croisée, sont dominées par les cellules les plus nombreuses, empêchant le réseau de neurones d'apprendre des représentations discriminantes pour les minorités.
+
+Pour pallier cette limitation fondamentale, nous introduisons scRAW. scRAW se distingue des autoencodeurs variationnels (VAE) conventionnels comme scVI, en proposant une architecture déterministe focalisée sur la structuration géométrique de l'espace latent. Plutôt que de contraindre la distribution latente vers une normale isotrope (ce qui a pour effet pervers de lisser et d'homogénéiser l'espace, noyant les micro-clusters), scRAW laisse l'espace latent libre de s'organiser, tout en le sculptant activement via une fonction de perte composite. Cette perte est modulée dynamiquement en cours d'apprentissage par un système d'attention (poids par cellule) qui détecte à la volée les cellules morphologiquement isolées et numériquement rares.
+
+Cet article détaille l'ensemble du pipeline scRAW, de la modélisation probabiliste de l'entrée à l'architecture réseau, en passant par les mécanismes d'entraînement en deux phases et les choix de clustering final.
+
+% =============================================================================
+\section{Architecture Globale et Flux de Données}
+\label{sec:architecture}
+% =============================================================================
+
+Le pipeline de scRAW est conçu comme un processus continu intégrant le prétraitement, l'apprentissage de représentation profond, et le clustering final. 
+
+\begin{figure*}[htbp]
+\centering
+\resizebox{0.9\linewidth}{!}{%
+\begin{tikzpicture}[
+  node distance=0.9cm,
+  stage/.style={rectangle, draw, thick, rounded corners=8pt, align=center,
+    minimum width=2.8cm, minimum height=1.5cm, font=\small},
+  minitag/.style={rectangle, rounded corners=3pt, fill=#1, font=\tiny\bfseries\color{white},
+    inner sep=2pt, minimum height=0.4cm},
+  arr/.style={-{Stealth[length=3mm]}, thick, gray!70},
+  darr/.style={-{Stealth[length=3mm]}, thick, dashed, gray!50},
+]
+
+% Main pipeline stages
+\node[stage, fill=gray!8] (data) {\textbf{Raw counts}\\$n \times G$ gènes};
+\node[stage, fill=blue!6, right=0.9cm of data] (preproc) {\textbf{Preprocessing}\\Norm + HVG\\+ Scale};
+\node[stage, fill=phaseblue!10, right=0.9cm of preproc] (warmup) {\textbf{Phase 1}\\Warm-up\\30 ép.};
+\node[stage, fill=phaseorange!12, right=0.9cm of warmup] (weighted) {\textbf{Phase 2}\\Weighted\\+ Triplet\\(30--120)};
+\node[stage, fill=clustergreen!12, right=0.9cm of weighted] (cluster) {\textbf{Phase 3}\\HDBSCAN\\c4s2, EOM};
+\node[stage, fill=successgreen!15, right=0.9cm of cluster] (out) {$k$ clusters\\output};
+
+% Tags
+\node[minitag=gray!60, above=0.15cm of data.north] {INPUT};
+\node[minitag=phaseblue, above=0.15cm of warmup.north] {UNIFORM NB (0--29)};
+\node[minitag=phaseorange, above=0.15cm of weighted.north] {WEIGHTED NB};
+\node[minitag=successgreen, above=0.15cm of out.north] {OUTPUT};
+
+% Arrows
+\draw[arr] (data) -- node[above, font=\tiny]{\texttt{log1p}} (preproc);
+\draw[arr] (preproc) -- node[below, font=\tiny]{Encoder input : log1p} (warmup);
+\draw[arr] (warmup) -- node[above, font=\tiny]{Weights} node[below, font=\tiny]{Leiden} (weighted);
+\draw[arr] (weighted) -- node[above, font=\tiny]{$z_{128}$} (cluster);
+\draw[arr, clustergreen] (cluster) -- (out);
+
+% Weight update annotation
+\node[font=\tiny\bfseries, text=weightpurple, below=0.18cm of weighted.south, align=center]
+  {\textit{Pseudo-labels Leiden} $\to$ $w_i$ ($\Delta$10 ép., EMA)};
+
+\end{tikzpicture}%
+}
+\caption{Vue d'ensemble du pipeline global scRAW. Les données brutes subissent un prétraitement standard (log1p, HVG) avant d'alimenter l'autoencodeur. L'entraînement est scindé en deux phases : un warm-up uniforme pour stabiliser les poids, suivi d'une phase pondérée où les signaux des populations rares sont amplifiés dynamiquement.}
+\label{fig:pipeline_global}
+\end{figure*}
+
+\subsection{L'Autoencodeur Déterministe}
+L'architecture de base repose sur un autoencodeur symétrique multicouche perceptron (MLP). L'encodeur applique une séquence de transformations projectives et non-linéaires pour réduire la dimensionalité originelle (qui peut atteindre plusieurs milliers de gènes hautement variables) à un vecteur latent $z \in \mathbb{R}^{128}$. Les couches cachées successives (512, 256, 128 neurones) utilisent une fonction d'activation LeakyReLU, suivie systématiquement d'une Normalisation de Batch (BatchNorm) et d'un Dropout régularisateur (taux de 0.1). Le choix du LeakyReLU évite la mort de neurones (dying ReLU problem) dans des contextes de forte sparsité des gradients.
+
+Contrairement aux architectures génératives, l'espace latent $z$ résulte d'une projection linéaire pure finale, sans échantillonnage stochastique, garantissant ainsi qu'une même cellule avec le même profil d'expression produira systématiquement le même embedding. Le décodeur est le reflet symétrique de l'encodeur (128, 256, 512 neurones) et reconstruit l'espace d'origine.
+
+\subsection{Correction de Batch via DANN}
+Pour les jeux de données agrégés provenant de multiples expériences, un module optionnel DANN (Domain-Adversarial Neural Network) est disponible. Il consiste en un discriminateur branché directement sur l'espace latent $z$, chargé de prédire l'origine du lot (batch) de chaque cellule. Lors de la rétropropagation, une couche de \textit{Gradient Reversal} inverse le signe du gradient issu de ce discriminateur. L'encodeur est ainsi contraint d'apprendre des caractéristiques qui trompent le discriminateur, conduisant à une représentation invariante aux effets de batch.
+
+% =============================================================================
+\section{Modélisation de la Reconstruction}
+\label{sec:reconstruction}
+% =============================================================================
+
+Le cœur probabiliste de scRAW réside dans la manière dont la perte de reconstruction est formulée. Les données scRNA-seq présentent intrinsèquement une forte sur-dispersion, c'est-à-dire que la variance de l'expression d'un gène donné à travers les cellules est significativement supérieure à sa moyenne.
+
+\subsection{Distribution Négative Binomiale (NB)}
+Une distribution de Poisson, où la variance est égale à la moyenne, est inappropriée. scRAW utilise donc une log-vraisemblance négative basée sur une distribution Négative Binomiale. Le modèle projette deux paramètres clés : la moyenne estimée $\mu$ et un paramètre de dispersion $\theta$ fixe (par défaut \texttt{nb\_theta} = 10.0). La relation variance-moyenne est modélisée par :
+\[
+  \text{Var}_{NB} = \mu + \frac{\mu^2}{\theta}
+\]
+Plus $\theta$ est faible, plus le modèle tolère la sur-dispersion. La moyenne $\mu_{ij}$ pour la cellule $i$ et le gène $j$ est paramétrée avec soin pour éviter les instabilités numériques inhérentes au calcul des exponentielles. Le réseau produit un logit brut $r_{ij}$, qui est exponentié et multiplié par un facteur de taille cellulaire (size factor) $s_i$ défini par :
+\[
+  s_i = \mathrm{clip}\!\left(\frac{\mathrm{lib}_i}{\max(\mathrm{med}_{+},10^{-6})},\,10^{-3},\,10^{3}\right)
+\]
+où $\mathrm{lib}_i$ est la somme totale des comptages bruts (library size) de la cellule $i$, et $\mathrm{med}_{+}$ est la taille de bibliothèque médiane globale. Cela permet au modèle de dissocier le profil d'expression relatif (dicté par l'encodeur) de la profondeur de séquençage globale de la cellule, traitant ainsi le bruit technique de capture.
+
+\subsection{Double Flux de Données}
+Une caractéristique architecturale importante de scRAW est le maintien d'un double flux de données. Alors que la cible d'optimisation (la perte NB) se calcule invariablement par rapport aux \textit{raw counts} originaux non transformés (présents dans \texttt{adata.layers['original\_X']}), l'entrée physique du réseau neuronal subit une transformation stabilisatrice. Typiquement, la transformation \texttt{log1p} ($x^{enc}_{ij} = \log(1 + x_{ij})$) est appliquée à l'entrée. Cela permet à l'encodeur de ne pas être dominé numériquement par les gènes très fortement exprimés, tout en exigeant du décodeur qu'il restitue l'amplitude réelle des données via la distribution NB.
+
+\begin{figure}[h]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  gene/.style={rectangle, minimum width=0.35cm, minimum height=0.7cm, draw=gray!50, thick, font=\tiny},
+]
+\node[font=\footnotesize\bfseries] at (-1.2, 0) {Original :};
+\foreach \i/\v/\c in {0/3.2/enccolor!20, 1/0.0/gray!10, 2/1.7/enccolor!20, 3/0.0/gray!10, 4/5.1/enccolor!30, 5/0.8/enccolor!10, 6/0.0/gray!10, 7/2.3/enccolor!20, 8/4.6/enccolor!25, 9/0.1/enccolor!5, 10/0.0/gray!10, 11/3.8/enccolor!25} {
+  \node[gene, fill=\c] at (\i*0.45, 0) {\v};
+}
+\node[font=\footnotesize\bfseries] at (-1.2, -1.2) {Masqué :};
+\foreach \i/\v/\c/\m in {0/3.2/enccolor!20/0, 1/0.0/gray!10/0, 2/\textcolor{dannred}{0}/dannred!15/1, 3/0.0/gray!10/0, 4/5.1/enccolor!30/0, 5/\textcolor{dannred}{0}/dannred!15/1, 6/0.0/gray!10/0, 7/2.3/enccolor!20/0, 8/\textcolor{dannred}{0}/dannred!15/1, 9/0.1/enccolor!5/0, 10/0.0/gray!10/0, 11/3.8/enccolor!25/0} {
+  \node[gene, fill=\c] at (\i*0.45, -1.2) {\v};
+}
+\node[font=\tiny, text=dannred] at (6.2, -1.2) {$\approx 20\%$};
+\end{tikzpicture}
+}
+\caption{Mécanisme de masquage stochastique (20\%). Les positions masquées en entrée sont remplacées par 0, forçant l'autoencodeur à inférer leur valeur à partir du contexte génique global.}
+\label{fig:masking}
+\end{figure}
+
+\subsection{Masquage Stochastique de Gènes}
+Pour forcer l'apprentissage de représentations sémantiques plutôt que la simple mémorisation triviale de l'entrée, scRAW intègre un mécanisme de \textit{Masked Autoencoding} (inspiré de scMAE). Durant les premières phases de l'entraînement, un masque binaire $M_{ij}$ est échantillonné selon une loi de Bernoulli avec une probabilité $p=0.2$. Les gènes masqués voient leur entrée fixée à zéro de manière stochastique à chaque mini-batch. Lors du calcul de la perte, les positions masquées sont surpondérées ($\omega = 0.75$) afin de forcer le réseau à concentrer son effort sur l'inférence des valeurs manquantes en s'appuyant sur les corrélations inter-géniques.
+
+% =============================================================================
+\section{Paradigme d'Entraînement en Deux Phases}
+\label{sec:phases}
+% =============================================================================
+
+Le défi central de l'identification des cellules rares réside dans l'effet d'entraînement monopolistique des populations majoritaires sur le gradient de l'erreur. Pour contrer ce phénomène, l'entraînement de scRAW est rigoureusement séparé en deux phases chronologiques distinctes.
+
+\begin{figure*}[htbp]
+\centering
+\resizebox{0.9\linewidth}{!}{%
+\begin{tikzpicture}[x=0.14cm, y=1cm]
+% Timeline axis
+\draw[-{Stealth}, thick] (0,0) -- (130,0) node[right, font=\small] {Époques};
+\foreach \x in {0,10,20,30,40,50,60,70,80,90,100,110,120} {
+  \draw[thick] (\x, -0.1) -- (\x, 0.1);
+  \node[below, font=\tiny] at (\x, -0.15) {\x};
+}
+% Phase 1
+\fill[phaseblue!15] (0, 0.3) rectangle (30, 2.8);
+\node[font=\small\bfseries, text=phaseblue, align=center] at (15, 2.3) {Phase 1 : Warm-up};
+\node[font=\tiny, align=center, text width=3.5cm] at (15, 1.5) {Perte NB uniforme\\Masquage 20\% actif\\Poids $w_i = 1$ pour tous};
+% Phase 2
+\fill[phaseorange!12] (30, 0.3) rectangle (120, 2.8);
+\node[font=\small\bfseries, text=phaseorange, align=center] at (75, 2.3) {Phase 2 : Pondérée + Régularisation rare};
+\node[font=\tiny, align=center, text width=10cm] at (75, 1.5) {Perte NB pondérée : $\mathcal{L} = \sum w_i \cdot \mathcal{L}_{NB}$\\Masquage désactivé \quad Poids dynamiques $w_i \in [0.25, 10]$};
+% Triplet ramp
+\fill[tripletyellow!15] (35, -0.4) rectangle (120, -1.2);
+\draw[tripletyellow!80!black, thick, -{Stealth}] (35, -0.8) -- (55, -0.8) node[midway, above, font=\tiny] {Ramp-up $T_{\text{ramp}}$ ép.};
+\draw[tripletyellow!80!black, thick] (55, -0.8) -- (120, -0.8);
+\node[font=\tiny, text=tripletyellow!80!black] at (80, -1.05) {Triplet Loss active ($\lambda_{rare}$, dès ép.~$e_{\text{start}}$)};
+% Weight updates markers
+\foreach \e in {40, 50, 60, 70, 80, 90, 100, 110} {
+  \draw[weightpurple, thick] (\e, 0.3) -- (\e, 0.7);
+  \node[font=\tiny, text=weightpurple, rotate=90, anchor=west] at (\e, 0.7) {$w$};
+}
+% Transition marker
+\draw[thick, dashed, gray] (30, -1.5) -- (30, 3.0);
+\node[font=\tiny\bfseries, gray, rotate=90, anchor=south] at (30, 3.2) {Transition};
+% Triplet start marker
+\draw[thick, dashed, tripletyellow!80!black] (35, -1.5) -- (35, 3.0);
+\node[font=\tiny\bfseries, text=tripletyellow!80!black, rotate=90, anchor=south] at (35, 3.2) {Triplet start};
+\node[font=\tiny, weightpurple] at (112, 0.95) {$\uparrow$ MAJ poids};
+\end{tikzpicture}%
+}
+\caption{Chronologie biphasique de l'apprentissage. La phase 1 stabilise les représentations fondamentales sans biais. La phase 2 désactive le masquage stochastique, active la pondération cellulaire individuelle et introduit progressivement la régularisation géométrique (Triplet Loss) pour sculpter l'espace latent autour des cellules identifiées comme rares.}
+\label{fig:timeline}
+\end{figure*}
+
+\subsection{Phase 1: Stabilisation (Warm-up)}
+Durant les 30 premières époques, le réseau apprend une représentation macroscopique globale des données. La fonction de perte est une agrégation uniforme sur tout le batch :
+\[
+  \mathcal{L}_{warmup} = \frac{1}{N} \sum_{i=1}^{N} \mathcal{L}_{recon}(x_i, \hat{x}_i)
+\]
+Chaque cellule possède un poids identique de $w_i=1$. Le masquage stochastique est pleinement actif pour jouer son rôle régularisateur et forcer l'encodeur à extraire des modules de co-expression génique cohérents. L'optimiseur Adam, couplé à un \textit{CosineAnnealingLR} pour la décroissance du taux d'apprentissage et à un écrêtage sévère des gradients (norme max de 5.0), assure une convergence lisse vers un espace latent structuré à large échelle.
+
+\subsection{Phase 2: Entraînement Ciblé}
+À l'issue de l'époque 30, le modèle opère une transition radicale. Le masquage est désactivé ; pour discerner les subtilités transcriptomiques des cellules rares, le réseau doit désormais analyser le profil d'expression dans sa totalité sans occlusion artificielle. L'objectif global devient alors une composition pondérée intégrant une régularisation spécialisée :
+\[
+  \mathcal{L}_{total} = \frac{1}{N}\sum_{i=1}^{N} w_i \cdot \mathcal{L}_{recon}(x_i, \hat{x}_i) \;+\; \rho(e) \cdot \lambda_{rare} \cdot \mathcal{L}_{triplet}
+\]
+Les poids $w_i$, calculés dynamiquement, deviennent les vecteurs de la sensibilité du modèle, amplifiant l'importance d'optimisation des cellules jugées atypiques.
+
+% =============================================================================
+\section{Pondération Dynamique Bicritère}
+\label{sec:weighting}
+% =============================================================================
+
+L'attribution du poids $w_i$ à chaque cellule est une innovation centrale de scRAW. Pour définir ce qu'est une "cellule rare", l'algorithme ne s'appuie pas sur de la supervision externe, mais effectue une auto-évaluation régulière (toutes les 10 époques) de l'espace latent qu'il génère. Cette évaluation repose sur deux critères complémentaires fusionnés additivement.
+
+\subsection{Critère 1: Poids de Fréquence de Pseudo-Cluster}
+Une cellule est rare si elle appartient à un groupe morphologique numériquement faible. À intervalles réguliers, l'algorithme effectue un clustering rapide (Leiden) sur le graphe des $k$-plus proches voisins de l'espace latent courant. Ces pseudo-labels permettent d'estimer la fréquence relative $\text{freq}_{c_i}$ du cluster $c_i$ auquel appartient la cellule $i$. Un poids d'inverse-fréquence est calculé selon une loi de puissance amortie :
+\[
+  w_{freq,i} = \left(\frac{1}{\mathrm{freq}_{c_i}}\right)^{\alpha}
+\]
+L'exposant $\alpha$ (fixé à 0.4 par défaut) joue un rôle critique. Une relation purement inverse ($\alpha=1$) engendrerait une explosion numérique pour les clusters représentant moins de 0.1\% des données. L'exposant fractionnaire adoucit cette courbe, octroyant une pondération forte mais gérable aux populations très réduites. L'ensemble des poids de fréquence est ensuite normalisé de façon à ce que la moyenne globale soit stricte égale à 1, préservant ainsi la magnitude du gradient d'erreur.
+
+\subsection{Critère 2: Poids de Densité Locale}
+Une cellule peut appartenir à un petit cluster (par artefact de fragmentation de l'algorithme de Leiden) tout en étant plongée dans une zone densément peuplée de l'espace latent. Pour vérifier la rareté véritable, un critère géométrique est ajouté : l'isolement spatial. Le système évalue la distance euclidienne $d_i^{(k)}$ séparant la cellule $i$ de son $k$-ème plus proche voisin (typiquement $k=15$).
+\[
+  \tilde{w}^{dens}_i = \mathrm{clip}\!\left(\left(\frac{d_i^{(k)}}{\mathrm{médiane}_{j}\bigl(d_j^{(k)}\bigr)}\right)^{\beta},\;0.05,\;c_{dens}\right)
+\]
+Les cellules situées dans les marges de l'espace latent ou formant des îlots distants auront une distance significativement supérieure à la médiane de l'ensemble du jeu de données, conduisant à un $w_{dens,i} > 1$. Ces deux signaux sont ensuite fusionnés de manière convexe via un ratio $\gamma=0.6$, accordant un poids légèrement plus fort à l'analyse topologique (Leiden) qu'à l'analyse purement distance.
+
+\begin{figure}[h]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  node distance=0.8cm and 0.5cm,
+  comp/.style={rectangle, draw, thick, rounded corners=6pt, align=center,
+    text width=3.8cm, minimum height=1.6cm, font=\scriptsize},
+  op/.style={circle, draw, thick, fill=white, minimum size=0.8cm, font=\small\bfseries},
+  arr/.style={-{Stealth[length=2.5mm]}, thick},
+]
+\node[comp, fill=latentcolor!15, text width=3.5cm] (latent) {\textbf{Espace latent $z$}};
+\node[comp, fill=weightpurple!10, below left=1.2cm and -0.1cm of latent] (freq) {%
+  \textbf{Poids de fréquence}\\[4pt]
+  Leiden $\to$ pseudo-labels\\[4pt]
+  $w_{freq} \propto (1/\text{freq}_c)^{\alpha}$};
+\node[comp, fill=weightpurple!10, below right=1.2cm and -0.1cm of latent] (density) {%
+  \textbf{Poids de densité}\\[4pt]
+  Distance k-NN ($k=15$)\\[4pt]
+  $w_{dens} \propto (d_i^{(k)}/\text{méd})^{\beta}$};
+\node[op, below=1.8cm of latent, fill=weightpurple!20] (fusion) {$+$};
+\node[comp, fill=weightpurple!15, below=0.8cm of fusion, text width=4.5cm] (result) {%
+  \textbf{Poids final fusionné}\\[2pt]
+  $w_i = \gamma w_{freq} + (1-\gamma) w_{dens}$\\[2pt]
+  Momentum EMA ($\mu=0.7$)};
+\draw[arr] (latent) -| (freq);
+\draw[arr] (latent) -| (density);
+\draw[arr] (freq) |- (fusion) node[near end, above left, font=\tiny\bfseries]{$\gamma$};
+\draw[arr] (density) |- (fusion) node[near end, above right, font=\tiny\bfseries]{$1-\gamma$};
+\draw[arr, weightpurple] (fusion) -- (result);
+\end{tikzpicture}
+}
+\caption{Architecture du calcul de poids bicritère. L'utilisation d'une Moyenne Mobile Exponentielle (EMA) lors de l'application du poids final assure une transition fluide et prévient les oscillations instables du gradient lors des recalcules périodiques.}
+\label{fig:weighting}
+\end{figure}
+
+% =============================================================================
+\section{Régularisation Locale: La Triplet Loss}
+\label{sec:triplet}
+% =============================================================================
+
+Si les poids individuels forcent l'encodeur à mieux reconstruire le profil d'expression des cellules rares, la Triplet Loss, introduite à l'époque 35, s'attaque directement à la topologie de l'espace latent en forçant la ségrégation des clusters.
+
+\subsection{Mécanisme de Semi-Hard Mining}
+L'idée sous-jacente est d'appliquer un apprentissage contrastif (contrastive learning) localisé. À chaque itération de la phase 2, des cellules considérées comme "rares" (celles possédant un poids $w_i \geq 1.2$) sont sélectionnées comme ancres ($a$). Pour chaque ancre, l'algorithme recherche dans l'espace latent :
+\begin{enumerate}
+    \item Un voisin positif (même pseudo-cluster Leiden) situé le plus loin possible (\textit{hard positive}).
+    \item Un voisin négatif (cluster différent) situé au plus proche, mais au-delà de la distance du positif (\textit{semi-hard negative}).
+\end{enumerate}
+La fonction de perte est formulée comme :
+\[
+  \mathcal{L}_{triplet} = \frac{1}{|\mathcal{A}|} \sum_{a \in \mathcal{A}} \max\!\Bigl(0,\; d_{pos}(a) - d_{neg}(a) + m\Bigr)
+\]
+Cette équation force la distance vers l'intrus ($d_{neg}$) à excéder la distance vers l'allié lointain ($d_{pos}$) d'une marge de sécurité stricte $m=0.4$. L'utilisation de négatifs semi-hard plutôt que de "hard" extrêmes empêche la destruction de la structure de voisinage naturelle et l'effondrement géométrique de l'espace.
+
+\subsection{Activation par Ramp-up Progressif}
+Une introduction brutale d'une contrainte topologique exogène sur un réseau en cours d'optimisation de sa perte de reconstruction NB provoque généralement un choc de gradient, pulvérisant la cohérence de l'espace latent naissant. Pour pallier cela, scRAW utilise une fonction d'activation de rampe linéaire $\rho(e)$. La force effective de la régularisation ($\rho(e) \cdot \lambda_{rare}$) croît linéairement sur une période de 20 époques (de l'époque 35 à 55), laissant au décodeur le temps de ré-ajuster ses projections paramétriques face aux nouvelles contraintes géométriques subies par $z$.
+
+% =============================================================================
+\section{Clustering et Extraction de Signal}
+\label{sec:clustering}
+% =============================================================================
+
+À l'issue des 120 époques d'entraînement, la matrice de compte a été projetée en une matrice dense $z \in \mathbb{R}^{n \times 128}$. Dans la vaste majorité des pipelines single-cell actuels (type Seurat ou Scanpy standard), l'étape de clustering est précédée par une série de réductions de dimensionnalité, généralement PCA suivie d'une projection non-linéaire UMAP ou t-SNE sur 2 ou 3 dimensions.
+
+scRAW prend le parti architectural inverse. Les algorithmes de réduction comme UMAP, bien qu'excellents pour la visualisation 2D, ont tendance à déformer les distances globales et à agréger par erreur les petites sous-populations dispersées. scRAW applique donc directement l'algorithme de clustering hiérarchique basé sur la densité \textbf{HDBSCAN} sur l'espace latent complet en 128 dimensions.
+
+Pour garantir la sensibilité requise à l'extraction de cellules rares, les paramètres de HDBSCAN sont finement ajustés. Le paramètre \texttt{min\_cluster\_size} est fixé à 4, permettant d'isoler théoriquement des sous-types cellulaires extrêmement confidentiels. Le paramètre \texttt{min\_samples} est descendu à 2 pour réduire le critère de densité central, évitant que ces micro-clusters ne soient relégués au rang de bruit stochastique. La méthode d'extraction "Excess of Mass" (\texttt{eom}) est retenue car elle préserve naturellement la coexistence de macro-clusters très étendus avec de minuscules satellites, contrairement à la méthode par feuille qui forcerait une sur-fragmentation inutile des grandes populations saines.
+
+% =============================================================================
+\section{Dynamique des Flux de Gradients}
+\label{sec:gradient_flow}
+% =============================================================================
+
+L'efficacité redoutable de scRAW provient du subtil équilibrage des forces s'exerçant sur l'espace latent pendant la phase de pondération.
+L'encodeur est soumis au feu croisé de deux signaux de rétropropagation complémentaires. Le premier signal, puissant et global, provient de la reconstruction probabiliste ($\nabla_z \mathcal{L}_{NB}$). Bien qu'il affecte toutes les cellules, sa magnitude est dictée par les poids dynamiques $w_i$, forçant les matrices de poids du réseau à ne pas ignorer la fidélité de reconstruction des transcriptomes rares. Le second signal, chirurgical et localisé, provient de la Triplet Loss ($\nabla_z \mathcal{L}_{triplet}$). Il tire ou repousse physiquement les coordonnées des cellules isolées indépendamment de leur qualité de reconstruction. Cette dualité permet une ségrégation propre sans perte du profil d'expression fondamental biologique.
+
+% =============================================================================
+\section{Conclusion}
+% =============================================================================
+
+L'algorithme scRAW propose un changement de paradigme dans l'analyse de données scRNA-seq en adressant frontalement le problème du déséquilibre des populations cellulaires. Par l'abandon des hypothèses de distribution latente isotrope au profit d'un espace déterministe sculpté dynamiquement, le pipeline parvient à combiner la robustesse d'un autoencodeur profond avec la sensibilité extrême des méthodes de détection d'anomalies topologiques. La synergie entre la pondération bicritère et la régularisation contrastive ouvre de nouvelles perspectives pour l'identification \textit{de novo} de lignées cellulaires rares en oncologie, en immunologie et dans l'étude des tissus en développement, là où les signaux mineurs recèlent souvent les clés majeures de la compréhension biologique.
+
+\end{document}
+% =============================================================================
