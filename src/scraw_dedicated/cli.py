@@ -1145,6 +1145,8 @@ def run_once(args: argparse.Namespace) -> int:
                 embedding_snapshots=selected_snapshots,
                 labels=labels_for_evo,
                 algorithm_name="scraw",
+                random_state=args.seed,
+                projection_2d_per_snapshot=shared_snapshot_proj,
                 params_info=params_info,
                 dataset_info=dataset_info,
             )

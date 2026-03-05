@@ -1330,17 +1330,21 @@ def plot_umap_evolution(
     max_cols: int = 4,
     point_size: int = 3,
     random_state: int = 42,
-    max_points: int = 5000,
+    max_points: int = 0,
     max_snapshots: int = 18,
     projection_mode: str = "shared",
     color_mode: str = "ground_truth",
     cell_weights_per_snapshot: Optional[List[np.ndarray]] = None,
     batch_labels: Optional[np.ndarray] = None,
     labels_per_snapshot: Optional[List[np.ndarray]] = None,
+    projection_2d_per_snapshot: Optional[List[np.ndarray]] = None,
     params_info: Optional[Dict[str, Any]] = None,
     dataset_info: Optional[str] = None,
 ) -> Optional[plt.Figure]:
-    """Plot gallery of UMAP projections across training snapshots."""
+    """Plot gallery of UMAP projections across training snapshots.
+
+    `max_points <= 0` disables subsampling and plots all cells.
+    """
     from math import ceil
 
     fixed_label_mode = color_mode in {"ground_truth", "ground_truth_weighted", "batch"}
@@ -1384,7 +1388,8 @@ def plot_umap_evolution(
 
     first_emb = np.asarray(valid_snapshots[0]["snapshot"]["embeddings"])
     n_cells = first_emb.shape[0]
-    use_subsample = int(max_points) > 0 and n_cells > int(max_points)
+    use_precomputed_projection = projection_2d_per_snapshot is not None
+    use_subsample = (not use_precomputed_projection) and int(max_points) > 0 and n_cells > int(max_points)
     subsample_idx = None
     if use_subsample:
         rng = np.random.default_rng(int(random_state))
@@ -1397,7 +1402,13 @@ def plot_umap_evolution(
 
     shared_umap_fallback = False
     shared_umap_2d_by_snapshot: Optional[List[np.ndarray]] = None
-    if projection_mode == "shared":
+    if use_precomputed_projection:
+        provided = [np.asarray(x) for x in (projection_2d_per_snapshot or [])]
+        if len(provided) == len(valid_snapshots_all):
+            shared_umap_2d_by_snapshot = [provided[i] for i in selected_indices]
+        elif len(provided) == len(valid_snapshots):
+            shared_umap_2d_by_snapshot = provided
+    if shared_umap_2d_by_snapshot is None and projection_mode == "shared":
         shared_input = []
         for entry in valid_snapshots:
             emb = np.asarray(entry["snapshot"]["embeddings"])
@@ -1568,11 +1579,14 @@ def plot_umap_evolution(
         "batch": "Batch",
         "pseudo_cluster": "Pseudo-Clusters",
     }.get(color_mode, "Ground Truth")
-    proj_suffix = (
-        "shared-UMAP"
-        if projection_mode == "shared" and not shared_umap_fallback
-        else ("shared-fallback-2D" if projection_mode == "shared" else "per-snapshot")
-    )
+    if use_precomputed_projection and shared_umap_2d_by_snapshot is not None:
+        proj_suffix = "shared-UMAP (precomputed)"
+    else:
+        proj_suffix = (
+            "shared-UMAP"
+            if projection_mode == "shared" and not shared_umap_fallback
+            else ("shared-fallback-2D" if projection_mode == "shared" else "per-snapshot")
+        )
     coverage_suffix = f"{n_snapshots}/{len(valid_snapshots_all)} snapshots"
     fig.suptitle(
         f"UMAP Evolution - {algorithm_name} ({mode_suffix} | {proj_suffix} | {coverage_suffix})",
