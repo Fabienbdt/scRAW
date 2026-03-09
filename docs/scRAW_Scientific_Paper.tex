@@ -1,7 +1,7 @@
 % =============================================================================
 % Document compilable avec: pdflatex scRAW_Scientific_Paper.tex
 % =============================================================================
-\documentclass[10pt,twocolumn,a4paper]{article}
+\documentclass[11pt,a4paper]{article}
 
 % --- Packages ----------------------------------------------------------------
 \usepackage[utf8]{inputenc}
@@ -10,10 +10,9 @@
 \usepackage{mathptmx}
 \usepackage{amsmath,amssymb}
 \usepackage{geometry}
-\geometry{a4paper, margin=1.6cm, columnsep=0.7cm}
+\geometry{a4paper, margin=2.5cm}
 \usepackage{hyperref}
 \usepackage{enumitem}
-\usepackage{abstract}
 \usepackage{titlesec}
 
 
@@ -30,34 +29,26 @@
 \titleformat{\subsection}{\normalsize\bfseries}{\thesubsection.}{0.5em}{}
 
 % --- Title -------------------------------------------------------------------
-\title{\vspace{-1.2cm}\LARGE\textbf{scRAW: Single-Cell Rare-population Autoencoder Weighting}\\[4pt]
+\title{\textbf{scRAW: Single-Cell Rare-population Autoencoder Weighting}\\[4pt]
 \large Un cadre pour l'identification de populations cellulaires rares}
-\author{\normalsize Fabien BIDET, Victoria BOURGEAIS, Loann Giovannangeli, Patricia THÉBAULT}
+\author{Fabien BIDET, Victoria BOURGEAIS, Loann Giovannangeli, Patricia THÉBAULT}
 \date{}
 
 \begin{document}
 
-\twocolumn[
-  \begin{@twocolumnfalse}
-    \maketitle
-    \begin{abstract}
-      \noindent Les données de scRNA-seq sont de grande dimension, bruitées et souvent fortement déséquilibrées. Dans ce contexte, les populations cellulaires rares sont difficiles à isoler car leur signal est dominé par celui des groupes majoritaires. Nous présentons ici la configuration retenue de scRAW, un autoencodeur déterministe conçu pour apprendre un espace latent adapté à ce problème. Le modèle utilisé dans ce travail combine une reconstruction MSE, un entraînement en deux phases, une pondération dynamique par cellule, une régularisation locale par Triplet Loss et une correction de batch par DANN. Le clustering final est réalisé directement dans l'espace latent à l'aide de HDBSCAN. Ce document présente une version courte du cadre méthodologique et des premiers résultats obtenus du modèle sur le jeu de données Human Baron Pancreas.
-      \vspace{0.5cm}
-    \end{abstract}
-  \end{@twocolumnfalse}
-]
+\maketitle
+
+\begin{abstract}
+Les données de scRNA-seq sont à la fois creuses, bruitées et fortement déséquilibrées, ce qui rend la détection de populations rares difficile. Nous présentons ici la configuration retenue de scRAW, un autoencodeur déterministe qui combine reconstruction MSE, entraînement en deux phases, pondération dynamique par cellule, Triplet Loss et correction de batch par DANN. Le clustering final est réalisé directement dans l'espace latent avec HDBSCAN. Ce document résume le cadre méthodologique et les premiers résultats obtenus sur le jeu Human Baron Pancreas.
+\end{abstract}
 
 % =============================================================================
 \section{Introduction}
 % =============================================================================
 
-L'analyse transcriptomique à l'échelle de la cellule unique permet d'observer finement l'hétérogénéité d'un tissu. Cette richesse s'accompagne de difficultés méthodologiques bien connues : la matrice d'expression est creuse, le bruit technique est important et le nombre de gènes reste très supérieur au nombre de dimensions utiles pour la description de la structure biologique. Un bruit supplémentaire peut aussi apparaître lorsque les données proviennent de plusieurs individus, de plusieurs technologies de séquençage ou de plusieurs temps d'acquisition. Ce phénomène correspond aux effets de batch \cite{tran2020}. Il constitue un enjeu important dans la construction de l'espace latent, car il faut conserver l'information biologique utile sans laisser la représentation être dominée par des variations techniques.
+L'analyse transcriptomique à cellule unique permet de décrire finement l'hétérogénéité d'un tissu, mais elle pose plusieurs difficultés classiques : la matrice d'expression est très grande, creuse et bruitée, et les effets de batch peuvent perturber la structure latente \cite{tran2020}. En pratique, le clustering non supervisé dépend fortement des choix de prétraitement, de réduction de dimension et de la méthode de partitionnement, ce qui explique la variabilité observée d'un jeu de données à l'autre \cite{luecken2019,duo2020,xu2025}.
 
-Au-delà de ces sources de variabilité, le clustering non supervisé constitue lui-même une étape délicate. En l'absence d'annotations de référence, la partition obtenue dépend fortement des choix de prétraitement, de sélection de gènes, de réduction de dimension et de la méthode de clustering utilisée. Les recommandations de bonnes pratiques et les études comparatives montrent qu'aucune méthode ne domine dans tous les contextes et que les performances varient sensiblement selon le jeu de données et la structure biologique recherchée \cite{luecken2019,duo2020}. Cette difficulté a conduit au développement de nombreuses méthodes dédiées au clustering single-cell ainsi qu'à des benchmarks comparatifs plus récents, comme scCluBench \cite{xu2025}.
-
-Une difficulté particulière concerne l'identification des populations rares. Ces populations peuvent représenter une faible fraction des cellules observées tout en restant biologiquement importantes, ce qui a motivé plusieurs méthodes dédiées en single-cell \cite{grun2015,jiang2016,wegmann2019}. Dans un schéma d'apprentissage standard, leur contribution à la fonction de perte est souvent trop faible pour orienter l'apprentissage de l'espace latent. Elles peuvent alors être absorbées par des groupes majoritaires ou interprétées comme du bruit. Ce biais se retrouve aussi lors de l'évaluation : des métriques classiques comme le NMI, l'ARI ou le coefficient de silhouette reflètent surtout la qualité globale de séparation et la structure des groupes majoritaires. La reconnaissance des petites populations peut donc être sous-estimée.
-
-scRAW a été conçu pour répondre à cette situation. L'idée générale est de construire un espace latent déterministe, puis d'ajuster l'entraînement pour accorder davantage d'importance aux cellules numériquement rares ou localement isolées. Le modèle utilisé ici repose sur une reconstruction MSE, une pondération dynamique, une régularisation locale et une correction de batch par DANN.
+Le problème est encore plus marqué pour les populations rares, qui représentent peu de cellules mais peuvent rester biologiquement importantes \cite{grun2015,jiang2016,wegmann2019}. Dans un apprentissage standard, leur contribution à la fonction de perte est souvent trop faible pour influencer la représentation apprise. scRAW a été conçu pour corriger ce biais en combinant un espace latent déterministe, une pondération dynamique des cellules, une régularisation locale par Triplet Loss et une correction adversariale des effets de batch.
 
 
 % =============================================================================
@@ -66,25 +57,13 @@ scRAW a été conçu pour répondre à cette situation. L'idée générale est d
 
 \subsection{Vue d'ensemble}
 
-Le pipeline scRAW comprend quatre étapes principales : la préparation de la matrice d'expression, l'apprentissage d'un espace latent, la mise à jour périodique de poids par cellule, puis le clustering final. Une cellule d'entrée $x_i \in \mathbb{R}^{G}$ est d'abord encodée dans l'espace latent, puis reconstruite par le décodeur :
-\[
-  z_i = f_{\mathrm{enc}}(x_i),
-  \qquad
-  \hat{x}_i = f_{\mathrm{dec}}(z_i)
-\]
-Ici, $x_i$ désigne le profil d'expression de la cellule $i$, $G$ le nombre de gènes considérés, $z_i \in \mathbb{R}^{d_z}$ la représentation latente et $\hat{x}_i$ la reconstruction produite par le décodeur. Les fonctions $f_{\mathrm{enc}}$ et $f_{\mathrm{dec}}$ représentent respectivement l'encodeur et le décodeur.
-
-L'architecture retenue est un autoencodeur déterministe à trois couches cachées dans l'encodeur, suivi d'un décodeur symétrique. Les largeurs des couches sont notées $h_1$, $h_2$ et $h_3$, la dimension latente $d_z$ et le taux de dropout $p_{\mathrm{drop}}$. Chaque bloc caché applique une couche linéaire, puis une normalisation, une activation LeakyReLU et un dropout. Une tête adversariale $g_{\mathrm{batch}}$ est aussi reliée au latent pour prédire la variable de batch $b_i$. Dans le code, cette branche utilise un Gradient Reversal Layer, ce qui laisse la prédiction inchangée vers l'avant mais inverse le gradient remontant vers l'encodeur afin de réduire l'information de batch dans $z_i$.
+Le pipeline scRAW comprend quatre étapes : prétraitement de la matrice d'expression, apprentissage d'un espace latent par autoencodeur, mise à jour périodique de poids par cellule, puis clustering final dans le latent. Le modèle utilisé ici est un autoencodeur déterministe profond avec encodeur et décodeur symétriques. Une tête adversariale de batch est connectée au latent via un Gradient Reversal Layer afin de réduire l'information technique liée au batch.
 
 \subsection{Reconstruction et déroulement de l'entraînement}
 
-Dans la configuration retenue, la reconstruction repose sur une erreur quadratique entre la valeur observée et la valeur reconstruite pour chaque gène. Pour chaque cellule, ces erreurs sont ensuite moyennées sur l'ensemble des gènes afin d'obtenir la perte de reconstruction $\mathcal{L}_{\mathrm{recon},i}$.
+Dans la configuration retenue, la reconstruction repose sur une perte MSE appliquée à la matrice prétraitée. Une fraction des gènes est masquée aléatoirement à l'entrée, suivant une stratégie inspirée des approches de type masked autoencoder pour le single-cell \cite{fang2024,richter2025}. L'entraînement est organisé en deux phases. Le warm-up stabilise d'abord le latent avec des poids uniformes. La seconde phase active la pondération dynamique, la Triplet Loss et, si plusieurs batches sont présents, la correction adversariale.
 
-Pendant l'entraînement, une partie des gènes est masquée aléatoirement à l'entrée. Le taux de masquage est noté $p_{\mathrm{mask}}$. Le modèle ne cherche donc pas seulement à recopier l'entrée, mais à reconstruire le profil d'expression initial à partir d'une information partiellement cachée. Les gènes masqués et non masqués peuvent contribuer différemment à la perte de reconstruction. Cette importance relative est réglée par le coefficient $\omega$ : plus $\omega$ est élevé, plus la reconstruction des positions masquées est favorisée. En l'absence de masque, on retrouve une moyenne quadratique classique sur les gènes.
-
-Ce principe s'inscrit dans la famille des approches à masquage étudiées récemment pour le single-cell, notamment dans scMAE \cite{fang2024}, et plus largement dans les travaux consacrés à l'apprentissage auto-supervisé en génomique single-cell \cite{richter2025}. Dans la configuration retenue, ce masquage reste actif tout au long de l'entraînement.
-
-L'entraînement est divisé en deux temps. Une première phase de warm-up, de durée $E_{\mathrm{warm}}$, laisse toutes les cellules contribuer de manière uniforme afin de stabiliser le latent. Une seconde phase introduit la pondération dynamique, tandis que la correction de batch et la Triplet Loss peuvent s'activer à des époques propres à chacune. La perte optimisée peut alors s'écrire
+La perte optimisée s'écrit
 \[
   \mathcal{L}_{\mathrm{total}}
   =
@@ -94,38 +73,17 @@ L'entraînement est divisé en deux temps. Une première phase de warm-up, de du
   +
   \lambda_{\mathrm{adv}}\,\mathcal{L}_{\mathrm{batch}}
 \]
-Dans cette équation, $\mathcal{L}_{\mathrm{total}}$ désigne la perte optimisée pendant la phase principale, $w_i$ le poids attribué à la cellule $i$, $\lambda_{\mathrm{rare}}$ le coefficient de la Triplet Loss, $\rho(e)$ le coefficient de ramp-up à l'époque $e$, $\mathcal{L}_{\mathrm{triplet}}$ la perte contrastive locale, $\lambda_{\mathrm{adv}}$ le poids du terme de correction de batch et $\mathcal{L}_{\mathrm{batch}}$ la perte associée au discriminateur de batch.
-
-Pendant le warm-up, les poids restent uniformes avec $w_i=1$, mais la branche DANN peut déjà être active si $e \ge e_{\mathrm{adv}}$. Le terme triplet, lui, s'active à partir d'une époque $e_{\mathrm{trip}}$. La durée totale de l'entraînement est notée $E$, la taille des mini-batches $B$ et le taux d'apprentissage $\eta$. Une recherche d'hyperparamètres avec Optuna \cite{akiba2019} a été utilisée pour retenir ces paramètres.
+où $w_i$ est le poids attribué à la cellule $i$, $\mathcal{L}_{\mathrm{recon},i}$ la perte de reconstruction, $\mathcal{L}_{\mathrm{triplet}}$ la contrainte locale sur le latent, $\rho(e)$ le ramp-up de la Triplet Loss et $\mathcal{L}_{\mathrm{batch}}$ le terme adversarial de correction de batch. Les hyperparamètres utilisés dans ce travail ont été retenus par recherche Optuna \cite{akiba2019}.
 
 \subsection{Pondération dynamique et Triplet Loss}
 
-Le poids d'une cellule combine deux informations. La première vient de la taille du pseudo-cluster auquel elle appartient. La seconde repose sur son isolement local dans l'espace latent, mesuré à partir de distances de voisinage. Les pseudo-labels $c_i$ sont recalculés périodiquement à partir du latent. Ils sont obtenus par Leiden pendant l'entraînement, en ajustant sa résolution pour obtenir un nombre de groupes aussi proche que possible du nombre connu de labels du jeu de données. Les deux composantes du poids sont ensuite fusionnées de manière additive, normalisées, bornées entre $w_{\min}$ et $w_{\max}$, puis lissées dans le temps par un coefficient de momentum $\mu$. L'intervalle de mise à jour de ces poids est noté $T_w$.
+Les poids cellulaires combinent deux signaux : la rareté du pseudo-cluster auquel appartient la cellule et son isolement local dans l'espace latent. Les pseudo-labels sont recalculés périodiquement par Leiden, puis les deux composantes du poids sont fusionnées, normalisées et bornées avant d'être lissées dans le temps. L'objectif est d'augmenter la contribution des cellules rares ou localement atypiques à la perte de reconstruction.
 
-La Triplet Loss agit en parallèle sur la structure locale du latent. Elle s'appuie sur un ensemble d'ancres sélectionnées à partir des poids, puis compare pour chaque ancre une cellule du même pseudo-groupe et une cellule d'un groupe différent. Dans sa forme simple, ce terme peut s'écrire
-\[
-  \mathcal{L}_{\mathrm{triplet}}
-  =
-  \frac{1}{|\mathcal{A}|}
-  \sum_{a \in \mathcal{A}}
-  \max \left(
-    0,\,
-    \|z_a - z_{p(a)}\|_2
-    -
-    \|z_a - z_{n(a)}\|_2
-    +
-    m
-  \right)
-\]
-où $\mathcal{A}$ désigne l'ensemble des ancres retenues, $z_a$ l'embedding latent de l'ancre $a$, $z_{p(a)}$ celui du positif associé, $z_{n(a)}$ celui du négatif associé et $m$ la marge du terme triplet. Les distances utilisées dans ce terme sont des distances euclidiennes dans l'espace latent. Dans le code, le positif retenu est le plus éloigné du même pseudo-groupe, tandis que le négatif retenu suit une règle semi-hard. L'activation de ce terme commence à l'époque $e_{\mathrm{trip}}$ et progresse ensuite de manière graduelle.
+La Triplet Loss agit en parallèle sur la géométrie locale du latent. Les ancres sont choisies parmi les cellules à poids élevé, puis associées à un positif du même pseudo-groupe et à un négatif d'un autre groupe. Ce terme vise à rapprocher localement les cellules similaires et à mieux séparer les populations rares des groupes majoritaires voisins.
 
 \subsection{Clustering final}
 
-En fin d'entraînement, le clustering est réalisé directement dans l'espace latent
-\[
-  Z=\{z_1,\dots,z_N\}\subset\mathbb{R}^{d_z}
-\]
-où $Z$ est l'ensemble des embeddings latents en fin d'entraînement, $z_i$ l'embedding de la cellule $i$ et $d_z$ la dimension de l'espace latent. À partir de cet espace, le clustering final est réalisé avec HDBSCAN \cite{mcinnes2017}. Les hyperparamètres associés à cette étape sont notés $m_{\mathrm{cluster}}$ pour la taille minimale de cluster, $m_{\mathrm{samples}}$ pour la densité minimale locale, $s_{\mathrm{sel}}$ pour la règle de sélection des clusters et $r_{\mathrm{noise}}$ pour la stratégie de réassignation du bruit.
+En fin d'entraînement, le clustering est réalisé directement dans l'espace latent avec HDBSCAN \cite{mcinnes2017}. Ce choix permet d'éviter une réduction de dimension supplémentaire avant la partition finale et de conserver une méthode sensible aux variations locales de densité, ce qui est pertinent pour la détection de petites populations.
 
 % =============================================================================
 \section{Résultats}

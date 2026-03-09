@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import logging
+import time
 
 import numpy as np
 import torch
@@ -30,6 +31,18 @@ from .scraw_losses_and_weights import ScrawLossWeightMixin
 
 
 logger = logging.getLogger(__name__)
+
+
+def _format_seconds_short(seconds: float) -> str:
+    """Format a duration compactly for training progress logs."""
+    total = max(0, int(round(float(seconds))))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h:d}h{m:02d}m{s:02d}s"
+    if m > 0:
+        return f"{m:d}m{s:02d}s"
+    return f"{s:d}s"
 
 
 @AlgorithmRegistry.register
@@ -1141,6 +1154,25 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         if epochs > 0:
             snapshot_anchor = int(min(snapshot_anchor, epochs - 1))
 
+        logger.info(
+            (
+                "Starting scRAW training: epochs=%d warmup=%d batch_size=%d "
+                "device=%s recon=%s weight_update_interval=%d momentum=%.3f "
+                "triplet_start=%d triplet_weight=%.4f dann_weight=%.4f snapshots=%s"
+            ),
+            epochs,
+            warmup,
+            batch_size,
+            device.type,
+            recon_mode,
+            update_interval,
+            momentum,
+            triplet_start,
+            triplet_weight,
+            adv_weight,
+            "on" if capture else "off",
+        )
+
         def _should_capture_epoch(epoch_idx: int) -> bool:
             """Return whether an embedding snapshot should be captured at this epoch."""
             # On capture toujours:
@@ -1340,9 +1372,12 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             )
 
         # --- Étape 6: boucle principale d'entraînement ---
+        fit_start_time = time.time()
         for epoch in range(start_epoch, epochs):
+            epoch_start_time = time.time()
             # warm-up: uniform reconstruction; weighted phase: dynamic cell weights.
             weighted_phase = epoch >= warmup
+            weights_refreshed = False
             # Weight refresh policy:
             # - first weighted epoch,
             # - then every `update_interval` epochs.
@@ -1410,6 +1445,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                         fused_unclipped_mixed, dtype=np.float32
                     )
                 current_pseudo = pseudo_new
+                weights_refreshed = True
 
             total_loss_sum = 0.0
             rec_sum = 0.0
@@ -1539,6 +1575,55 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             hist["components"]["reconstruction"].append(float(avg_rec))
             hist["components"]["triplet"].append(float(avg_triplet))
             hist["components"]["batch_adv"].append(float(avg_adv))
+
+            current_lr = float(optimizer.param_groups[0]["lr"])
+            elapsed_s = time.time() - fit_start_time
+            epoch_s = time.time() - epoch_start_time
+            done_epochs = max(1, (epoch - start_epoch + 1))
+            avg_epoch_s = elapsed_s / done_epochs
+            remaining_epochs = max(0, epochs - epoch - 1)
+            eta_s = avg_epoch_s * remaining_epochs
+            phase_name = "warm-up" if not weighted_phase else "weighted"
+            extra_flags: List[str] = []
+            if weights_refreshed:
+                extra_flags.append("weights=refreshed")
+            if weighted_phase:
+                extra_flags.append(
+                    "w=[%.2f, %.2f]"
+                    % (
+                        float(np.nanmin(current_weights)),
+                        float(np.nanmax(current_weights)),
+                    )
+                )
+            if triplet_weight > 0.0 and epoch >= triplet_start:
+                extra_flags.append(f"triplet_ramp={rare_loss_ramp:.2f}")
+            if batch_head is not None and adv_weight > 0.0:
+                adv_start_epoch = int(
+                    self._param(
+                        "adversarial_start_epoch",
+                        DEFAULT_PARAM_OVERRIDES["adversarial_start_epoch"],
+                    )
+                )
+                if epoch >= adv_start_epoch:
+                    extra_flags.append("dann=on")
+            logger.info(
+                (
+                    "[Train][%s] epoch %d/%d | total=%.4f rec=%.4f "
+                    "triplet=%.4f adv=%.4f | lr=%.6g | epoch=%s elapsed=%s eta=%s%s"
+                ),
+                phase_name,
+                epoch + 1,
+                epochs,
+                avg_total,
+                avg_rec,
+                avg_triplet,
+                avg_adv,
+                current_lr,
+                _format_seconds_short(epoch_s),
+                _format_seconds_short(elapsed_s),
+                _format_seconds_short(eta_s),
+                f" | {' ; '.join(extra_flags)}" if extra_flags else "",
+            )
 
             # Scheduler stepped une fois par epoch.
             scheduler.step()
