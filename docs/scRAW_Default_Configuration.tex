@@ -93,7 +93,7 @@
 \maketitle
 
 \begin{abstract}
-Ce document d\'ecrit le fonctionnement de \textbf{scRAW} (Single-Cell Rare-population Autoencoder Weighting), un autoencoder d\'eterministe pour le clustering de donn\'ees scRNA-seq avec une attention particuli\`ere aux populations cellulaires rares. Il pr\'esente les \'etapes du pipeline : preprocessing, architecture r\'eseau, syst\`eme de pond\'eration dynamique bicrit\`ere et r\'egularisation par Triplet Loss. Le module optionnel de correction de batch (DANN) est \'egalement d\'ecrit.
+Ce document d\'ecrit le fonctionnement de \textbf{scRAW} (Single-Cell Rare-population Autoencoder Weighting), un autoencoder d\'eterministe pour le clustering de donn\'ees scRNA-seq avec une attention particuli\`ere aux populations cellulaires rares. Il pr\'esente les \'etapes du pipeline : preprocessing, architecture r\'eseau, syst\`eme de pond\'eration dynamique bicrit\`ere, r\'egularisation par Triplet Loss et correction de batch adversariale (DANN) activ\'ee par d\'efaut.
 \end{abstract}
 
 \vspace{0.5cm}
@@ -105,7 +105,7 @@ Ce document d\'ecrit le fonctionnement de \textbf{scRAW} (Single-Cell Rare-popul
 \label{sec:pipeline}
 % =============================================================================
 
-scRAW est un \textbf{autoencoder d\'eterministe} pour le clustering de donn\'ees scRNA-seq. Il n'utilise pas de sampling dans le latent space : chaque cellule produit un vecteur $z$ de 128 dimensions.
+scRAW est un \textbf{autoencoder d\'eterministe} pour le clustering de donn\'ees scRNA-seq. Dans la configuration par d\'efaut actuelle, chaque cellule produit un vecteur latent $z$ de 192 dimensions.
 
 \begin{figure}[H]
 \centering
@@ -125,28 +125,28 @@ scRAW est un \textbf{autoencoder d\'eterministe} pour le clustering de donn\'ees
 
 \node[stage, fill=blue!6, right=0.9cm of data] (preproc) {\textbf{Preprocessing}\\Norm + HVG\\+ Scale};
 
-\node[stage, fill=phaseblue!10, right=0.9cm of preproc] (warmup) {\textbf{Phase 1}\\Warm-up\\30 ep.};
+\node[stage, fill=phaseblue!10, right=0.9cm of preproc] (warmup) {\textbf{Phase 1}\\Warm-up\\74 ep.};
 
-\node[stage, fill=phaseorange!12, right=0.9cm of warmup] (weighted) {\textbf{Phase 2}\\Weighted\\+ Triplet\\(30--120)};
+\node[stage, fill=phaseorange!12, right=0.9cm of warmup] (weighted) {\textbf{Phase 2}\\Weighted\\+ Triplet + DANN\\(74--209)};
 
-\node[stage, fill=clustergreen!12, right=0.9cm of weighted] (cluster) {\textbf{Phase 3}\\HDBSCAN\\c4s2, EOM};
+\node[stage, fill=clustergreen!12, right=0.9cm of weighted] (cluster) {\textbf{Phase 3}\\HDBSCAN\\c8s8, EOM};
 
 \node[stage, fill=successgreen!15, right=0.9cm of cluster] (out) {$k$ clusters\\output};
 
 % Tags
 \node[minitag=gray!60, above=0.15cm of data.north] {INPUT};
-\node[minitag=phaseblue, above=0.15cm of warmup.north] {UNIFORM NB (0--29)};
-\node[minitag=phaseorange, above=0.15cm of weighted.north] {WEIGHTED NB};
+\node[minitag=phaseblue, above=0.15cm of warmup.north] {UNIFORM MSE (0--73)};
+\node[minitag=phaseorange, above=0.15cm of weighted.north] {WEIGHTED MSE + DANN};
 \node[minitag=successgreen, above=0.15cm of out.north] {OUTPUT};
 
 % Arrows
 \draw[arr] (data) -- node[above, font=\tiny]{\texttt{log1p}} (preproc);
 \draw[arr] (preproc) -- node[below, font=\tiny]{Encoder input : log1p} (warmup);
 \draw[arr] (warmup) -- node[above, font=\tiny]{Weights} node[below, font=\tiny]{Leiden} (weighted);
-\draw[arr] (weighted) -- node[above, font=\tiny]{$z_{128}$} (cluster);
+\draw[arr] (weighted) -- node[above, font=\tiny]{$z_{192}$} (cluster);
 \draw[arr, clustergreen] (cluster) -- (out);
 
-% (DANN optionnel, activable en multi-batch)
+% (DANN activ\'e par d\'efaut, d\'emarrage \`a l'\'epoque 55)
 
 % Weight update annotation (internal to phase 2, every 10 epochs)
 \node[font=\tiny\bfseries, text=weightpurple, below=0.18cm of weighted.south, align=center]
@@ -154,7 +154,7 @@ scRAW est un \textbf{autoencoder d\'eterministe} pour le clustering de donn\'ees
 
 \end{tikzpicture}%
 }
-\caption{Pipeline global scRAW. Preprocessing Scanpy (log1p), training en deux phases (warm-up NB uniforme, puis weighted phase avec Triplet Loss), puis clustering HDBSCAN sur le latent space. Le module DANN de correction de batch peut \^etre activ\'e en configuration multi-batch.}
+\caption{Pipeline global scRAW dans sa configuration par d\'efaut actuelle. Preprocessing Scanpy, warm-up MSE uniforme, puis phase pond\'er\'ee avec Triplet Loss et DANN actif, avant clustering final HDBSCAN sur le latent space.}
 \label{fig:pipeline_global}
 \end{figure}
 
@@ -166,7 +166,7 @@ scRAW est un \textbf{autoencoder d\'eterministe} pour le clustering de donn\'ees
 
 \subsection{Structure de l'autoencoder}
 
-Autoencoder sym\'etrique avec BatchNorm, LeakyReLU et Dropout. Le latent space est une pure linear projection (128D).
+Autoencoder sym\'etrique avec BatchNorm, LeakyReLU et Dropout. Le latent space est une pure linear projection (192D).
 
 \begin{figure}[H]
 \centering
@@ -194,7 +194,7 @@ Autoencoder sym\'etrique avec BatchNorm, LeakyReLU et Dropout. Le latent space e
 
 % ---- Latent ----
 \node[layer, fill=latentcolor!25, right=1.5cm of e3, text width=1.8cm, minimum height=1.2cm,
-  line width=1.5pt, draw=latentcolor] (z) {\textbf{Latent space}\\$z = 128$\\(Pure linear)};
+  line width=1.5pt, draw=latentcolor] (z) {\textbf{Latent space}\\$z = 192$\\(Pure linear)};
 
 % ---- Decoder ----
 \node[layer, fill=deccolor!10, right=1.5cm of z, text width=1.6cm] (d1) {\textbf{128}};
@@ -224,21 +224,21 @@ Autoencoder sym\'etrique avec BatchNorm, LeakyReLU et Dropout. Le latent space e
 
 \end{tikzpicture}%
 }
-\caption{Architecture scRAW. Hidden layers : Linear $\to$ BatchNorm $\to$ LeakyReLU $\to$ Dropout(0.1). Latent space : pure linear projection (128D). Batch conditioning d\'esactiv\'e.}
+\caption{Architecture scRAW. Hidden layers : Linear $\to$ BatchNorm $\to$ LeakyReLU $\to$ Dropout(0.3). Latent space : pure linear projection (192D). DANN activ\'e par d\'efaut sur la cl\'e de batch \texttt{batch}.}
 \label{fig:architecture}
 \end{figure}
 
 \begin{parambox}{Param\`etres network}
 \begin{tabular}{lll}
-\texttt{z\_dim} & \textbf{128} & Dimension du latent space \\
+\texttt{z\_dim} & \textbf{192} & Dimension du latent space \\
 \texttt{encoder\_layers} & \textbf{512, 256, 128} & Hidden layers de l'encoder \\
 \texttt{decoder\_layers} & \textbf{(sym\'etrique)} & Decoder mirror : 128, 256, 512 \\
 \texttt{activation} & \textbf{leaky\_relu} & Activation function \\
-\texttt{dropout} & \textbf{0.1} & Dropout rate \\
+\texttt{dropout} & \textbf{0.3} & Dropout rate \\
 \end{tabular}
 \end{parambox}
 
-\subsection{Adversarial discriminator (DANN) --- optionnel}
+\subsection{Adversarial discriminator (DANN) --- activ\'e par d\'efaut}
 \label{sec:dann_archi}
 
 Le module DANN (Domain-Adversarial Neural Network) permet la correction d'effets de batch en configuration multi-batch. Il ajoute un discriminateur adversarial sur l'espace latent qui force l'encoder \`a produire des repr\'esentations invariantes au batch d'origine.
@@ -253,11 +253,12 @@ Le gradient reversal inverse le signe du gradient lors de la backpropagation ($-
 
 \begin{parambox}{Param\`etres DANN}
 \begin{tabular}{lll}
-\texttt{use\_batch\_conditioning} & \textbf{false} & Conditionner le decoder sur le batch \\
-\texttt{adversarial\_batch\_weight} & \textbf{0.0} & Poids de la perte adversariale (0 = d\'esactiv\'e) \\
-\texttt{adversarial\_lambda} & \textbf{1.0} & \'Echelle du gradient reversal \\
-\texttt{adversarial\_start\_epoch} & \textbf{0} & \'Epoque de d\'emarrage du DANN \\
-\texttt{adversarial\_ramp\_epochs} & \textbf{0} & Dur\'ee du ramp-up lin\'eaire du DANN \\
+\texttt{use\_batch\_conditioning} & \textbf{true} & Activer la correction batch adversariale \\
+\texttt{batch\_correction\_key} & \textbf{batch} & Colonne \texttt{obs} utilis\'ee pour le batch \\
+\texttt{adversarial\_batch\_weight} & \textbf{0.0561506963} & Poids de la perte adversariale \\
+\texttt{adversarial\_lambda} & \textbf{1.75} & \'Echelle du gradient reversal \\
+\texttt{adversarial\_start\_epoch} & \textbf{55} & \'Epoque de d\'emarrage du DANN \\
+\texttt{adversarial\_ramp\_epochs} & \textbf{60} & Dur\'ee du ramp-up lin\'eaire du DANN \\
 \texttt{mmd\_batch\_weight} & \textbf{0.0} & Poids MMD (0 = d\'esactiv\'e) \\
 \end{tabular}
 \end{parambox}
@@ -266,6 +267,10 @@ Le gradient reversal inverse le signe du gradient lors de la backpropagation ($-
 \section{Entr\'ee des donn\'ees et reconstruction}
 \label{sec:reconstruction}
 % =============================================================================
+
+\begin{importantbox}
+La configuration par d\'efaut actuelle utilise \texttt{reconstruction\_distribution=mse}. Les sous-sections consacr\'ees \`a la branche NB ci-dessous documentent un mode alternatif encore disponible dans scRAW, mais non utilis\'e par le preset \texttt{default}.
+\end{importantbox}
 
 \subsection{Double flux de donn\'ees}
 
@@ -357,7 +362,7 @@ Les donn\'ees scRNA-seq pr\'esentent une \textbf{sur-dispersion} : la variance d
   \item $\mu$ : moyenne de comptage pr\'edite par le mod\`ele.
   \item $\theta$ : param\`etre de dispersion NB (\texttt{nb\_theta}, configurable).
 \end{itemize}
-Plus $\theta$ est petit, plus la sur-dispersion est importante ; $\theta \to \infty$ redonne une Poisson. Par d\'efaut, \texttt{nb\_theta=10.0}, mais cette valeur reste ajustable.
+Plus $\theta$ est petit, plus la sur-dispersion est importante ; $\theta \to \infty$ redonne une Poisson. Dans la branche NB, la configuration par d\'efaut actuelle fixe \texttt{nb\_theta=2.5815883941220323}, mais cette valeur reste ajustable.
 
 La perte de reconstruction utilise la \textbf{log-vraisemblance n\'egative NB} avec les m\^emes garde-fous num\'eriques que le code.
 
@@ -457,7 +462,7 @@ Ce comportement est strictement le m\^eme sch\'ema que la NB, en rempla\c{c}ant 
 
 \subsection{Masquage de g\`enes (style scMAE)}
 
-Le masquage est un \textbf{bruit d'entr\'ee stochastique} appliqu\'e pendant le \textbf{warm-up uniquement}. Concr\`etement, \`a \textbf{chaque mini-batch} (donc plusieurs fois par \'epoque), un nouveau masque est tir\'e ind\'ependamment pour chaque couple cellule--g\`ene ; il n'y a pas de masque fixe conserv\'e entre les \'epoques.
+Le masquage est un \textbf{bruit d'entr\'ee stochastique} appliqu\'e pendant le warm-up, puis \textbf{conserv\'e en phase pond\'er\'ee dans la configuration par d\'efaut} (\texttt{masking\_apply\_weighted=true}). Concr\`etement, \`a \textbf{chaque mini-batch} (donc plusieurs fois par \'epoque), un nouveau masque est tir\'e ind\'ependamment pour chaque couple cellule--g\`ene ; il n'y a pas de masque fixe conserv\'e entre les \'epoques.
 
 \[
 M_{ij}^{(e,b)} \sim \mathrm{Bernoulli}(p), \quad p=\texttt{masking\_rate}
@@ -498,8 +503,8 @@ Avec $\omega>0.5$, les positions masqu\'ees contribuent davantage que les positi
 
 \paragraph{Chronologie du masquage}
 \begin{itemize}[nosep]
-  \item Warm-up (\'epoques 0--29) : masquage actif, r\'e\'echantillonn\'e \`a chaque mini-batch.
-  \item Phase pond\'er\'ee (\'epoques 30--119) : masquage \textbf{d\'esactiv\'e} car \texttt{masking\_apply\_weighted=false}.
+  \item Warm-up (\'epoques 0--73) : masquage actif, r\'e\'echantillonn\'e \`a chaque mini-batch.
+  \item Phase pond\'er\'ee (\'epoques 74--209) : masquage \textbf{toujours actif} car \texttt{masking\_apply\_weighted=true}.
 \end{itemize}
 
 \begin{figure}[H]
@@ -521,21 +526,21 @@ Avec $\omega>0.5$, les positions masqu\'ees contribuent davantage que les positi
 }
 
 % Brace for masked
-\node[font=\tiny, text=dannred] at (6.2, -1.2) {$\approx 20\%$};
+\node[font=\tiny, text=dannred] at (6.2, -1.2) {$\approx 15\%$};
 
 \end{tikzpicture}
-\caption{Masquage al\'eatoire de 20\% des g\`enes en entr\'ee. Les positions masqu\'ees (en rouge) sont remplac\'ees par 0 et pond\'er\'ees avec \texttt{masked\_recon\_weight=0.75} (positions non masqu\'ees : 0.25) dans la perte de reconstruction.}
+\caption{Masquage al\'eatoire de 15\% des g\`enes en entr\'ee. Les positions masqu\'ees (en rouge) sont remplac\'ees par 0 et pond\'er\'ees avec \texttt{masked\_recon\_weight=0.8} (positions non masqu\'ees : 0.2) dans la perte de reconstruction.}
 \label{fig:masking}
 \end{figure}
 
 \begin{parambox}{Param\`etres reconstruction --- valeurs par d\'efaut}
 \begin{tabular}{lll}
-\texttt{reconstruction\_distribution} & \textbf{nb} & Distribution Negative Binomial \\
-\texttt{nb\_theta} & \textbf{10.0} & Dispersion globale (fixe, non apprise) \\
-\texttt{nb\_input\_transform} & \textbf{log1p} & Transformation de l'entr\'ee encoder \\
-\texttt{masking\_rate} & \textbf{0.2} & 20\% des g\`enes masqu\'es (warm-up seul) \\
-\texttt{masked\_recon\_weight} & \textbf{0.75} & Poids relatif des positions masqu\'ees dans la perte \\
-\texttt{masking\_apply\_weighted} & \textbf{false} & Masquage d\'esactiv\'e en phase 2 \\
+\texttt{reconstruction\_distribution} & \textbf{mse} & Reconstruction quadratique sur \texttt{adata.X} \\
+\texttt{nb\_theta} & \textbf{2.5815883941} & Param\`etre conserv\'e pour le mode NB alternatif \\
+\texttt{nb\_input\_transform} & \textbf{log1p} & Transformation par d\'efaut si la branche NB est utilis\'ee \\
+\texttt{masking\_rate} & \textbf{0.15} & 15\% des g\`enes masqu\'es \\
+\texttt{masked\_recon\_weight} & \textbf{0.8} & Poids relatif des positions masqu\'ees dans la perte \\
+\texttt{masking\_apply\_weighted} & \textbf{true} & Masquage conserv\'e en phase 2 \\
 \end{tabular}
 \end{parambox}
 
@@ -553,54 +558,54 @@ L'entra\^inement est organis\'e en deux phases distinctes afin d'initialiser les
   x=0.14cm, y=1cm,
 ]
 
-% Timeline axis (scaled: 1 unit = 1 epoch, displayed up to 120)
-\draw[-{Stealth}, thick] (0,0) -- (130,0) node[right, font=\small] {\'Epoques};
-\foreach \x in {0,10,20,30,40,50,60,70,80,90,100,110,120} {
+% Timeline axis (scaled: 1 unit = 1 epoch, displayed up to 210)
+\draw[-{Stealth}, thick] (0,0) -- (220,0) node[right, font=\small] {\'Epoques};
+\foreach \x in {0,20,40,60,74,80,100,120,140,160,180,200,210} {
   \draw[thick] (\x, -0.1) -- (\x, 0.1);
   \node[below, font=\tiny] at (\x, -0.15) {\x};
 }
 
-% Phase 1: Warm-up (0-29)
-\fill[phaseblue!15] (0, 0.3) rectangle (30, 2.8);
-\node[font=\small\bfseries, text=phaseblue, align=center] at (15, 2.3) {Phase 1 : Warm-up};
-\node[font=\tiny, align=center, text width=3.5cm] at (15, 1.5) {Perte NB uniforme\\Masquage 20\% actif\\Poids $w_i = 1$ pour tous};
+% Phase 1: Warm-up (0-73)
+\fill[phaseblue!15] (0, 0.3) rectangle (74, 2.8);
+\node[font=\small\bfseries, text=phaseblue, align=center] at (37, 2.3) {Phase 1 : Warm-up};
+\node[font=\tiny, align=center, text width=6.2cm] at (37, 1.5) {Perte MSE uniforme\\Masquage 15\% actif\\DANN actif d\`es l'\'epoque 55\\Poids $w_i = 1$ pour tous};
 
-% Phase 2: Weighted (30-119)
-\fill[phaseorange!12] (30, 0.3) rectangle (120, 2.8);
-\node[font=\small\bfseries, text=phaseorange, align=center] at (75, 2.3) {Phase 2 : Pond\'er\'ee + R\'egularisation rare};
-\node[font=\tiny, align=center, text width=10cm] at (75, 1.5) {Perte NB pond\'er\'ee : $\mathcal{L} = \sum w_i \cdot \mathcal{L}_{NB}$\\Masquage d\'esactiv\'e \quad Poids dynamiques $w_i \in [0.25, 10]$};
+% Phase 2: Weighted (74-209)
+\fill[phaseorange!12] (74, 0.3) rectangle (210, 2.8);
+\node[font=\small\bfseries, text=phaseorange, align=center] at (142, 2.3) {Phase 2 : Pond\'er\'ee + Triplet + DANN};
+\node[font=\tiny, align=center, text width=12cm] at (142, 1.5) {Perte MSE pond\'er\'ee : $\mathcal{L} = \sum w_i \cdot \mathcal{L}_{MSE} + \lambda_{adv}\mathcal{L}_{DANN}$\\Masquage conserv\'e \quad Poids dynamiques $w_i \in [0.45, 8.0]$};
 
-% Triplet ramp (start epoch 35, ramp 20 ep)
-\fill[tripletyellow!15] (35, -0.4) rectangle (120, -1.2);
-\draw[tripletyellow!80!black, thick, -{Stealth}] (35, -0.8) -- (55, -0.8) node[midway, above, font=\tiny] {Ramp-up $T_{\text{ramp}}$ \'ep.};
-\draw[tripletyellow!80!black, thick] (55, -0.8) -- (120, -0.8);
-\node[font=\tiny, text=tripletyellow!80!black] at (80, -1.05) {Triplet Loss active ($\lambda_{rare}$, d\`es \'ep.~$e_{\text{start}}$)};
+% Triplet ramp (start epoch 84, ramp 20 ep)
+\fill[tripletyellow!15] (84, -0.4) rectangle (210, -1.2);
+\draw[tripletyellow!80!black, thick, -{Stealth}] (84, -0.8) -- (104, -0.8) node[midway, above, font=\tiny] {Ramp-up $T_{\text{ramp}}$ = 20 \'ep.};
+\draw[tripletyellow!80!black, thick] (104, -0.8) -- (210, -0.8);
+\node[font=\tiny, text=tripletyellow!80!black] at (154, -1.05) {Triplet Loss active (\texttt{rare\_triplet\_weight}=0.2346, d\`es l'\'ep. 84)};
 
 % Weight updates markers
-\foreach \e in {40, 50, 60, 70, 80, 90, 100, 110} {
+\foreach \e in {74,84,94,104,114,124,134,144,154,164,174,184,194,204} {
   \draw[weightpurple, thick] (\e, 0.3) -- (\e, 0.7);
   \node[font=\tiny, text=weightpurple, rotate=90, anchor=west] at (\e, 0.7) {$w$};
 }
 
-% Transition marker (epoch 30)
-\draw[thick, dashed, gray] (30, -1.5) -- (30, 3.0);
-\node[font=\tiny\bfseries, gray, rotate=90, anchor=south] at (30, 3.2) {Transition};
+% Transition marker (epoch 74)
+\draw[thick, dashed, gray] (74, -1.5) -- (74, 3.0);
+\node[font=\tiny\bfseries, gray, rotate=90, anchor=south] at (74, 3.2) {Transition};
 
-% Triplet start marker (epoch 35)
-\draw[thick, dashed, tripletyellow!80!black] (35, -1.5) -- (35, 3.0);
-\node[font=\tiny\bfseries, text=tripletyellow!80!black, rotate=90, anchor=south] at (35, 3.2) {Triplet start};
+% Triplet start marker (epoch 84)
+\draw[thick, dashed, tripletyellow!80!black] (84, -1.5) -- (84, 3.0);
+\node[font=\tiny\bfseries, text=tripletyellow!80!black, rotate=90, anchor=south] at (84, 3.2) {Triplet start};
 
 % Legend
-\node[font=\tiny, weightpurple] at (112, 0.95) {$\uparrow$ MAJ poids};
+\node[font=\tiny, weightpurple] at (197, 0.95) {$\uparrow$ MAJ poids};
 
 \end{tikzpicture}%
 }
-\caption{Chronologie de l'entra\^inement scRAW (exemple : 120 \'epoques, warm-up 30 + phase pond\'er\'ee 90). Les poids dynamiques sont initialis\'es \`a la transition puis mis \`a jour p\'eriodiquement. La Triplet Loss s'active apr\`es le warm-up avec un ramp-up lin\'eaire.}
+\caption{Chronologie de l'entra\^inement scRAW par d\'efaut : 210 \'epoques, warm-up 74, puis phase pond\'er\'ee 136 \'epoques. Les poids dynamiques sont initialis\'es \`a la transition puis mis \`a jour tous les 10 epochs. La Triplet Loss s'active \`a l'\'epoque 84 avec un ramp-up lin\'eaire de 20 epochs.}
 \label{fig:timeline}
 \end{figure}
 
 % -----------------------------------------------------------------------------
-\subsection{Phase 1 : Warm-up (\'epoques 0 \`a 29)}
+\subsection{Phase 1 : Warm-up (\'epoques 0 \`a 73)}
 \label{sec:phase1}
 
 \textbf{Objectif} : initialiser l'encoder/d\'ecodeur avec une repr\'esentation stable, sans biais de pond\'eration.
@@ -621,9 +626,9 @@ Toutes les cellules sont trait\'ees de mani\`ere \'egale (poids uniforme $w_i = 
 
 \begin{parambox}{Param\`etres warm-up}
 \begin{tabular}{lll}
-\texttt{warmup\_epochs} & \textbf{30} & Dur\'ee de la phase warm-up \\
-\texttt{batch\_size} & \textbf{256} & Taille des mini-batches \\
-\texttt{lr} & \textbf{0.001} & Taux d'apprentissage (Adam) \\
+\texttt{warmup\_epochs} & \textbf{74} & Dur\'ee de la phase warm-up \\
+\texttt{batch\_size} & \textbf{192} & Taille des mini-batches \\
+\texttt{lr} & \textbf{0.0023367034} & Taux d'apprentissage (Adam) \\
 \texttt{scheduler} & \textbf{CosineAnnealingLR} & Avec $\eta_{min} = \texttt{lr} \times 0.01$ \\
 \texttt{gradient clipping} & \textbf{max\_norm=5.0} & Clip des gradients par norme \\
 \end{tabular}
@@ -633,7 +638,7 @@ Toutes les cellules sont trait\'ees de mani\`ere \'egale (poids uniforme $w_i = 
 \subsection{Transition : calcul initial des poids}
 \label{sec:transition}
 
-\`A la fin du warm-up (\'epoque 30), l'entra\^inement s'interrompt bri\`evement pour :
+\`A la fin du warm-up (\'epoque 74), l'entra\^inement s'interrompt bri\`evement pour :
 \begin{enumerate}[nosep]
   \item \textbf{Encoder} tout le jeu de donn\'ees dans l'espace latent courant.
   \item \textbf{Fixer un $K$ de travail pour le pseudo-labeling} :
@@ -648,12 +653,12 @@ Toutes les cellules sont trait\'ees de mani\`ere \'egale (poids uniforme $w_i = 
 Ce processus est r\'ep\'et\'e tous les 10 cycles pendant la phase 2 (voir Section~\ref{sec:weighting}).
 
 % -----------------------------------------------------------------------------
-\subsection{Phase 2 : Entra\^inement pond\'er\'e (\'epoques 30 \`a 120)}
+\subsection{Phase 2 : Entra\^inement pond\'er\'e (\'epoques 74 \`a 209)}
 \label{sec:phase2}
 
 \textbf{Fonction de perte totale} :
 \[
-  \boxed{\mathcal{L}_{total} = \underbrace{\frac{1}{N}\sum_{i=1}^{N} w_i \cdot \mathcal{L}_{recon}(x_i, \hat{x}_i)}_{\text{Reconstruction pond\'er\'ee}} \;+\; \underbrace{\rho(e) \cdot \lambda_{rare} \cdot \mathcal{L}_{triplet}}_{\text{R\'egularisation rare}}}
+  \boxed{\mathcal{L}_{total} = \underbrace{\frac{1}{N}\sum_{i=1}^{N} w_i \cdot \mathcal{L}_{recon}(x_i, \hat{x}_i)}_{\text{Reconstruction pond\'er\'ee}} \;+\; \underbrace{\rho(e) \cdot \lambda_{rare} \cdot \mathcal{L}_{triplet}}_{\text{R\'egularisation rare}} \;+\; \underbrace{\lambda_{adv} \cdot \mathcal{L}_{DANN}}_{\text{Correction batch}}}
 \]
 \textit{Description des termes :}
 \begin{itemize}[nosep]
@@ -673,16 +678,16 @@ o\`u :
   \item $\lambda_{rare}$ est le poids de la r\'egularisation rare (\texttt{rare\_triplet\_weight}).
 \end{itemize}
 
-\textbf{Note} : en configuration mono-batch, la correction DANN est d\'esactiv\'ee (\texttt{adversarial\_batch\_weight=0.0}) et la perte totale se r\'eduit \`a reconstruction pond\'er\'ee + Triplet Loss. En multi-batch, un terme adversarial $\lambda_{adv} \cdot \mathcal{L}_{DANN}$ s'ajoute.
+\textbf{Configuration par d\'efaut} : la correction DANN est \textbf{active} avec \texttt{adversarial\_batch\_weight=0.0561506963}, \texttt{adversarial\_start\_epoch=55} et \texttt{adversarial\_ramp\_epochs=60}. Le terme de batch s'ajoute donc \`a la reconstruction pond\'er\'ee et \`a la Triplet Loss pendant la majeure partie de la phase 2.
 
-\textbf{Changement cl\'e} : le masquage est \textbf{d\'esactiv\'e} en phase 2 (\texttt{masking\_apply\_weighted = false}) pour ne pas aveugler les signaux d\'elicats des cellules rares, dont chaque g\`ene compte.
+\textbf{Changement cl\'e} : dans la configuration par d\'efaut actuelle, le masquage reste \textbf{actif} en phase 2 (\texttt{masking\_apply\_weighted = true}), ce qui maintient le signal de d\'ebruitage pendant l'entra\^inement pond\'er\'e.
 
 \begin{parambox}{Param\`etres entra\^inement global --- valeurs par d\'efaut}
 \begin{tabular}{lll}
-\texttt{epochs} & \textbf{120} & Nombre total d'\'epoques (warm-up + pond\'er\'ee) \\
-\texttt{warmup\_epochs} & \textbf{30} & Dur\'ee de la phase 1 (\'epoques 0--29) \\
-\texttt{batch\_size} & \textbf{256} & Cellules par mini-batch \\
-\texttt{lr} & \textbf{0.001} & Taux d'apprentissage Adam \\
+\texttt{epochs} & \textbf{210} & Nombre total d'\'epoques (warm-up + pond\'er\'ee) \\
+\texttt{warmup\_epochs} & \textbf{74} & Dur\'ee de la phase 1 (\'epoques 0--73) \\
+\texttt{batch\_size} & \textbf{192} & Cellules par mini-batch \\
+\texttt{lr} & \textbf{0.0023367034} & Taux d'apprentissage Adam \\
 \texttt{scheduler} & \textbf{CosineAnnealingLR} & $\eta_{min} = \texttt{lr} \times 0.01$ \\
 \texttt{gradient clipping} & \textbf{max\_norm=5.0} & Clip des gradients par norme \\
 \texttt{random\_state} & \textbf{42} & Graine pour reproductibilit\'e \\
@@ -731,7 +736,7 @@ Le syst\`eme de pond\'eration attribue \`a chaque cellule un poids $w_i$ calcul\
   \textbf{Poids final}\\[2pt]
   $w_i = \gamma \cdot w_{freq} + (1-\gamma) \cdot w_{dens}$\\[2pt]
   Momentum : $w^{(t)} = \mu \cdot w^{(t-1)} + (1-\mu) \cdot w^{fresh}$\\[2pt]
-  Clip final : $[0.25,\; 10.0]$};
+  Clip final : $[0.45,\; 8.0]$};
 
 % Arrows
 \draw[arr] (latent) -| (freq);
@@ -743,12 +748,12 @@ Le syst\`eme de pond\'eration attribue \`a chaque cellule un poids $w_i$ calcul\
 % Application arrow
 \node[comp, fill=phaseorange!10, below=0.8cm of result, text width=5cm] (apply) {%
   \textbf{Application dans la perte}\\[2pt]
-  $\mathcal{L}_{recon} = \sum w_i \cdot \mathcal{L}_{NB}(x_i, \hat{x}_i)$};
+  $\mathcal{L}_{recon} = \sum w_i \cdot \mathcal{L}_{MSE}(x_i, \hat{x}_i)$};
 \draw[arr, phaseorange] (result) -- (apply);
 
 \end{tikzpicture}%
 }
-\caption{Syst\`eme de pond\'eration bicrit\`ere. Les deux composantes (fr\'equence de cluster et densit\'e locale) sont combin\'ees additivement via $\gamma$, puis stabilis\'ees par momentum EMA $\mu$ et clipp\'ees \`a $[0.25, 10]$.}
+\caption{Syst\`eme de pond\'eration bicrit\`ere. Les deux composantes (fr\'equence de cluster et densit\'e locale) sont combin\'ees additivement via $\gamma=0.3$, puis stabilis\'ees par momentum EMA $\mu=0.85$ et clipp\'ees \`a $[0.45, 8]$.}
 \label{fig:weighting}
 \end{figure}
 
@@ -884,16 +889,16 @@ Au premier calcul de phase pond\'er\'ee (transition warm-up $\to$ weighted), le 
 \begin{parambox}{Param\`etres pond\'eration --- valeurs par d\'efaut}
 \begin{tabular}{lll}
 \texttt{pseudo\_label\_method} & \textbf{leiden} & M\'ethode de pseudo-labeling \\
-\texttt{weight\_exponent} ($\alpha$) & \textbf{0.4} & Exposant inverse-fr\'equence \\
+\texttt{weight\_exponent} ($\alpha$) & \textbf{0.7} & Exposant inverse-fr\'equence \\
 \texttt{density\_knn\_k} & \textbf{15} & Voisins pour densit\'e locale \\
 \texttt{density\_weight\_exponent} ($\beta$) & \textbf{1.0} & Exposant distance kNN \\
-\texttt{density\_weight\_clip} & \textbf{5.0} & Clip max densit\'e avant fusion \\
+\texttt{density\_weight\_clip} & \textbf{8.0} & Clip max densit\'e avant fusion \\
 \texttt{weight\_fusion\_mode} & \textbf{additive} & $w = \gamma \cdot w_{freq} + (1-\gamma) \cdot w_{dens}$ \\
-\texttt{cluster\_density\_alpha} ($\gamma$) & \textbf{0.6} & Ratio fr\'equence/densit\'e \\
-\texttt{min\_cell\_weight} & \textbf{0.25} & Poids minimum apr\`es normalisation \\
-\texttt{max\_cell\_weight} & \textbf{10.0} & Poids maximum \\
+\texttt{cluster\_density\_alpha} ($\gamma$) & \textbf{0.3} & Ratio fr\'equence/densit\'e \\
+\texttt{min\_cell\_weight} & \textbf{0.45} & Poids minimum apr\`es normalisation \\
+\texttt{max\_cell\_weight} & \textbf{8.0} & Poids maximum \\
 \texttt{dynamic\_weight\_update\_interval} & \textbf{10} & Recalcul tous les 10 cycles \\
-\texttt{dynamic\_weight\_momentum} ($\mu$) & \textbf{0.7} & Inertie EMA \\
+\texttt{dynamic\_weight\_momentum} ($\mu$) & \textbf{0.85} & Inertie EMA \\
 \end{tabular}
 \end{parambox}
 
@@ -921,7 +926,7 @@ La Triplet Loss structure \textbf{localement} l'espace latent autour des populat
 
 % Anchor
 \node[cell, fill=tripletyellow!40, line width=2pt] (a) at (1.0, 1.0) {A};
-\node[font=\tiny, below=0.35cm of a] {Ancre ($w \geq 1.2$)};
+\node[font=\tiny, below=0.35cm of a] {Ancre ($w \geq 1.8$)};
 
 % Positive (hardest = farthest in same cluster)
 \node[cell, fill=enccolor!30] (p) at (2.0, 2.0) {P};
@@ -954,7 +959,7 @@ La Triplet Loss structure \textbf{localement} l'espace latent autour des populat
 
 \end{tikzpicture}%
 }
-\caption{Triplet Loss avec semi-hard mining. L'ancre (cellule rare, $w \geq 1.2$) est attir\'ee vers son hard positive (alli\'e le plus \'eloign\'e) et repouss\'ee de son semi-hard negative (intrus le plus proche mais d\'ej\`a au-del\`a de $d_{pos}$). La marge $m$ garantit une s\'eparation minimale.}
+\caption{Triplet Loss avec semi-hard mining. L'ancre (cellule rare, $w \geq 1.8$) est attir\'ee vers son hard positive (alli\'e le plus \'eloign\'e) et repouss\'ee de son semi-hard negative (intrus le plus proche mais d\'ej\`a au-del\`a de $d_{pos}$). La marge $m$ garantit une s\'eparation minimale.}
 \label{fig:triplet}
 \end{figure}
 
@@ -962,7 +967,7 @@ La Triplet Loss structure \textbf{localement} l'espace latent autour des populat
 \begin{itemize}[nosep]
   \item \textbf{Hard positive} : $d_{pos}(a) = \max_{p \in \text{m\^eme cluster}} \|z_a - z_p\|_2$ --- force la compaction intra-cluster.
   \item \textbf{Semi-hard negative} : le n\'egatif le plus proche dont $d_{neg} > d_{pos}$. S'il n'existe pas de n\'egatif semi-hard, fallback sur le n\'egatif global le plus proche parmi les classes diff\'erentes.
-  \item \textbf{S\'election des ancres} : seules les cellules avec $w_i \geq 1.2$ (poids de raret\'e suffisant) participent. Maximum 64 ancres par mini-batch.
+  \item \textbf{S\'election des ancres} : seules les cellules avec $w_i \geq 1.8$ (poids de raret\'e suffisant) participent. Maximum 64 ancres par mini-batch.
 \end{itemize}
 
 \textbf{Formule compl\`ete de la Triplet Loss} :
@@ -1025,13 +1030,13 @@ Plateau & $e \ge e_{\text{start}} + T_{\text{ramp}}$ & 1 & $1 \times \lambda_{ra
 \begin{tikzpicture}[x=0.13cm, y=4cm]
 
 % Phase backgrounds
-\fill[phaseblue!10] (0, -0.06) rectangle (30, 1.12);
-\fill[phaseorange!8] (30, -0.06) rectangle (120, 1.12);
-\node[font=\small\bfseries, text=phaseblue, anchor=south] at (15, 1.12) {Warm-up (0--29)};
-\node[font=\small\bfseries, text=phaseorange, anchor=south] at (75, 1.12) {Phase pond\'er\'ee (30--119)};
+\fill[phaseblue!10] (0, -0.06) rectangle (74, 1.12);
+\fill[phaseorange!8] (74, -0.06) rectangle (210, 1.12);
+\node[font=\small\bfseries, text=phaseblue, anchor=south] at (37, 1.12) {Warm-up (0--73)};
+\node[font=\small\bfseries, text=phaseorange, anchor=south] at (142, 1.12) {Phase pond\'er\'ee (74--209)};
 
 % Axes
-\draw[-{Stealth}, thick] (-3, 0) -- (126, 0) node[right, font=\small] {\'Epoque $e$};
+\draw[-{Stealth}, thick] (-3, 0) -- (216, 0) node[right, font=\small] {\'Epoque $e$};
 \draw[-{Stealth}, thick] (0, -0.06) -- (0, 1.25) node[above, font=\small] {$\rho(e)$};
 
 % Y axis ticks
@@ -1042,70 +1047,70 @@ Plateau & $e \ge e_{\text{start}} + T_{\text{ramp}}$ & 1 & $1 \times \lambda_{ra
 }
 
 % X axis ticks (selected)
-\foreach \x in {0,10,20,30,40,50,55,60,70,80,90,100,110,120} {
+\foreach \x in {0,20,40,60,74,84,94,104,120,140,160,180,200,210} {
   \draw (\x, -0.02) -- (\x, 0.02);
   \node[below, font=\tiny] at (\x, -0.03) {\x};
 }
-\node[below, font=\tiny, text=tripletyellow!80!black] at (35, -0.06) {\textbf{35}};
+\node[below, font=\tiny, text=tripletyellow!80!black] at (84, -0.06) {\textbf{84}};
 
 % ρ(e) curve
 % Warmup: inactive (dashed gray)
-\draw[gray!50, dashed, thick] (0, 0) -- (30, 0);
+\draw[gray!50, dashed, thick] (0, 0) -- (74, 0);
 % Phase 2 before triplet start: ρ=0
-\draw[tripletyellow!80!black, very thick] (30, 0) -- (35, 0);
-% Ramp-up: linear 35→55
-\draw[tripletyellow!80!black, very thick] (35, 0) -- (55, 1);
-% Plateau: ρ=1, 55→120
-\draw[tripletyellow!80!black, very thick] (55, 1) -- (120, 1);
+\draw[tripletyellow!80!black, very thick] (74, 0) -- (84, 0);
+% Ramp-up: linear 84→104
+\draw[tripletyellow!80!black, very thick] (84, 0) -- (104, 1);
+% Plateau: ρ=1, 104→210
+\draw[tripletyellow!80!black, very thick] (104, 1) -- (210, 1);
 
 % Hatched ramp-up zone
-\fill[tripletyellow!12] (35, 0) -- (55, 1) -- (55, 0) -- cycle;
+\fill[tripletyellow!12] (84, 0) -- (104, 1) -- (104, 0) -- cycle;
 
 % Key point dots
-\fill[tripletyellow!80!black] (35,  0   ) circle (2.5pt);
-\fill[tripletyellow!80!black] (40,  0.25) circle (2.5pt);
-\fill[tripletyellow!80!black] (45,  0.5 ) circle (2.5pt);
-\fill[tripletyellow!80!black] (50,  0.75) circle (2.5pt);
-\fill[tripletyellow!80!black] (55,  1.0 ) circle (2.5pt);
+\fill[tripletyellow!80!black] (84,  0   ) circle (2.5pt);
+\fill[tripletyellow!80!black] (89,  0.25) circle (2.5pt);
+\fill[tripletyellow!80!black] (94,  0.5 ) circle (2.5pt);
+\fill[tripletyellow!80!black] (99,  0.75) circle (2.5pt);
+\fill[tripletyellow!80!black] (104,  1.0 ) circle (2.5pt);
 
 % Annotations
-\node[above right, font=\tiny, text=tripletyellow!80!black] at (35, 0.02)
+\node[above right, font=\tiny, text=tripletyellow!80!black] at (84, 0.02)
   {$\rho{=}0$\;$\lambda_{eff}{=}0$};
-\node[right, font=\tiny, text=tripletyellow!80!black] at (46, 0.5)
+\node[right, font=\tiny, text=tripletyellow!80!black] at (95, 0.5)
   {$\rho{=}0.5$\;$\lambda_{eff}{=}\lambda_{rare}/2$};
-\node[above, font=\tiny, text=tripletyellow!80!black] at (55, 1.01)
+\node[above, font=\tiny, text=tripletyellow!80!black] at (104, 1.01)
   {$\rho{=}1$\;$\lambda_{eff}{=}\lambda_{rare}$};
 
 % Dashed verticals at key epochs
-\draw[dashed, tripletyellow!60] (35, 0) -- (35, -0.05);
-\draw[dashed, tripletyellow!60] (55, 0) -- (55, -0.05);
+\draw[dashed, tripletyellow!60] (84, 0) -- (84, -0.05);
+\draw[dashed, tripletyellow!60] (104, 0) -- (104, -0.05);
 
 % Effective lambda on right side
-\draw[gray!60, -{Stealth}] (122, 0) -- (122, 1.1) node[right, font=\tiny, gray] {$\lambda_{eff}$};
-\node[right, font=\tiny, gray] at (122, 0)   {0};
-\node[right, font=\tiny, gray] at (122, 1.0) {$\lambda_{rare}$};
+\draw[gray!60, -{Stealth}] (212, 0) -- (212, 1.1) node[right, font=\tiny, gray] {$\lambda_{eff}$};
+\node[right, font=\tiny, gray] at (212, 0)   {0};
+\node[right, font=\tiny, gray] at (212, 1.0) {$\lambda_{rare}$};
 
 % Annotation: ramp zone
-\draw[{|[scale=1.2]}-{|[scale=1.2]}, thick, tripletyellow!60] (35, -0.05) -- (55, -0.05)
+\draw[{|[scale=1.2]}-{|[scale=1.2]}, thick, tripletyellow!60] (84, -0.05) -- (104, -0.05)
   node[midway, below, font=\tiny, text=tripletyellow!80!black] {$T_{\text{ramp}}$ \'ep. de mont\'ee};
 
 \end{tikzpicture}%
 }
-\caption{Profil du coefficient de ramp-up $\rho(e)$ (illustration avec valeurs par d\'efaut : $e_{\text{start}}=35$, \texttt{epochs}=120, donc $T_{\text{ramp}}=20$). Le poids effectif de la Triplet Loss dans $\mathcal{L}_{total}$ est $\rho(e)\cdot\lambda_{rare}$ : nul avant l'\'epoque de d\'emarrage, en mont\'ee lin\'eaire sur la p\'eriode de ramp-up, puis stable \`a $\lambda_{rare}$. La zone hachet\'ee repr\'esente la p\'eriode de transition.}
+\caption{Profil du coefficient de ramp-up $\rho(e)$ (illustration avec valeurs par d\'efaut : $e_{\text{start}}=84$, \texttt{epochs}=210, donc $T_{\text{ramp}}=20$). Le poids effectif de la Triplet Loss dans $\mathcal{L}_{total}$ est $\rho(e)\cdot\lambda_{rare}$ : nul avant l'\'epoque de d\'emarrage, en mont\'ee lin\'eaire sur la p\'eriode de ramp-up, puis stable \`a $\lambda_{rare}$. La zone hachet\'ee repr\'esente la p\'eriode de transition.}
 \label{fig:rampup}
 \end{figure}
 
-\textbf{Pourquoi un ramp-up et non une activation brutale ?} Si on activait la Triplet Loss \`a pleine force ($\lambda_{rare}$) d\`es $e_{\text{start}}$, le gradient triplet perturberait brusquement une reconstruction NB d\'ej\`a en cours de convergence. Les triplets form\'es \`a partir de pseudo-labels encore imparfaits g\'en\`ereraient des signaux contradictoires, pouvant d\'estabiliser l'espace latent. Le ramp-up laisse au mod\`ele le temps de s'adapter progressivement au nouveau signal.
+\textbf{Pourquoi un ramp-up et non une activation brutale ?} Si on activait la Triplet Loss \`a pleine force ($\lambda_{rare}$) d\`es $e_{\text{start}}$, le gradient triplet perturberait brusquement une reconstruction MSE d\'ej\`a en cours de convergence. Les triplets form\'es \`a partir de pseudo-labels encore imparfaits g\'en\`ereraient des signaux contradictoires, pouvant d\'estabiliser l'espace latent. Le ramp-up laisse au mod\`ele le temps de s'adapter progressivement au nouveau signal.
 
 \textbf{Pourquoi d\'emarrer apr\`es le warm-up ?} Quelques \'epoques suppl\'ementaires de pond\'eration pure entre la transition et $e_{\text{start}}$ permettent aux pseudo-labels de se stabiliser avant l'activation de la Triplet Loss. D\'emarrer trop t\^ot (pseudo-labels instables) ou trop tard (structure latente d\'ej\`a fig\'ee) peut nuire aux performances.
 
 \begin{parambox}{Param\`etres Triplet Loss --- valeurs par d\'efaut}
 \begin{tabular}{lll}
 \texttt{rare\_loss\_type} & \textbf{triplet} & Type de r\'egularisation rare \\
-\texttt{rare\_triplet\_weight} ($\lambda_{rare}$) & \textbf{0.1} & Poids dans la perte totale \\
+\texttt{rare\_triplet\_weight} ($\lambda_{rare}$) & \textbf{0.2346243650} & Poids dans la perte totale \\
 \texttt{rare\_triplet\_margin} ($m$) & \textbf{0.4} & Marge de s\'eparation \\
-\texttt{rare\_triplet\_min\_weight} & \textbf{1.2} & Seuil de poids pour \^etre ancre \\
-\texttt{rare\_triplet\_start\_epoch} & \textbf{35} & \'Epoque d'activation absolue \\
+\texttt{rare\_triplet\_min\_weight} & \textbf{1.8} & Seuil de poids pour \^etre ancre \\
+\texttt{rare\_triplet\_start\_epoch} & \textbf{84} & \'Epoque d'activation absolue \\
 \texttt{ramp-up} & \textbf{20 (par d\'efaut)} & Dur\'ee effective : $\max(1,\min(20,\texttt{epochs} - \texttt{rare\_triplet\_start\_epoch}))$ \\
 \texttt{max\_triplet\_anchors\_per\_batch} & \textbf{64} & Ancres max par mini-batch \\
 \end{tabular}
@@ -1116,7 +1121,7 @@ Plateau & $e \ge e_{\text{start}} + T_{\text{ramp}}$ & 1 & $1 \times \lambda_{ra
 \label{sec:clustering}
 % =============================================================================
 
-Les embeddings latents $z \in \mathbb{R}^{128}$ sont extraits en fin d'entra\^inement (\texttt{cluster\_preprocess\_mode=none} : pas de r\'eduction dimensionnelle suppl\'ementaire). HDBSCAN est appliqu\'e directement sur ces 128 dimensions.
+Les embeddings latents $z \in \mathbb{R}^{192}$ sont extraits en fin d'entra\^inement (\texttt{cluster\_preprocess\_mode=none} : pas de r\'eduction dimensionnelle suppl\'ementaire). HDBSCAN est appliqu\'e directement sur ces 192 dimensions.
 
 HDBSCAN effectue ensuite l'assignation des clusters en estimant la densit\'e locale hi\'erarchique.
 
@@ -1131,7 +1136,7 @@ HDBSCAN effectue ensuite l'assignation des clusters en estimant la densit\'e loc
   param/.style={font=\tiny\ttfamily, text=gray!70},
 ]
 
-\node[step, fill=latentcolor!15] (embed) {\textbf{Embeddings latents}\\$z \in \mathbb{R}^{n \times 128}$\\(sortie de l'encoder)};
+\node[step, fill=latentcolor!15] (embed) {\textbf{Embeddings latents}\\$z \in \mathbb{R}^{n \times 192}$\\(sortie de l'encoder)};
 
 \node[step, fill=clustergreen!10, right=2cm of embed, text width=3.5cm] (hdbscan) {\textbf{HDBSCAN}\\S\'election EOM\\Densit\'e hi\'erarchique};
 
@@ -1146,29 +1151,29 @@ HDBSCAN effectue ensuite l'assignation des clusters en estimant la densit\'e loc
 
 % Parameters
 \node[param, below=0.4cm of hdbscan, text width=3.5cm, align=center] {%
-  \texttt{min\_cluster\_size = 4}\\
-  \texttt{min\_samples = 2}\\
+  \texttt{min\_cluster\_size = 8}\\
+  \texttt{min\_samples = 8}\\
   \texttt{selection = eom}};
 
 \end{tikzpicture}%
 }
-\caption{Pipeline de clustering. HDBSCAN est appliqu\'e directement sur les embeddings 128D, sans r\'eduction dimensionnelle. Les points class\'es \og bruit \fg{} ($-1$) sont r\'eassign\'es au centroid de cluster le plus proche.}
+\caption{Pipeline de clustering. HDBSCAN est appliqu\'e directement sur les embeddings 192D, sans r\'eduction dimensionnelle. Les points class\'es \og bruit \fg{} ($-1$) sont r\'eassign\'es au centroid de cluster le plus proche.}
 \label{fig:clustering}
 \end{figure}
 
-\textbf{Justification des param\`etres \texttt{min\_cluster\_size = 4} et \texttt{min\_samples = 2}}
+\textbf{Justification des param\`etres \texttt{min\_cluster\_size = 8} et \texttt{min\_samples = 8}}
 
 \begin{itemize}[nosep]
-  \item \texttt{min\_cluster\_size = 4} : permet de d\'etecter des clusters aussi petits que 4 cellules, ce qui est important pour les populations rares.
-  \item \texttt{min\_samples = 2} : abaisse le seuil de \og point core \fg{}, r\'eduisant le nombre de cellules class\'ees comme bruit. Avec \texttt{min\_samples = 3} (d\'efaut HDBSCAN), les micro-clusters seraient enti\`erement class\'es bruit.
+  \item \texttt{min\_cluster\_size = 8} : impose une taille minimale un peu plus robuste pour les clusters finals tout en restant sensible aux populations rares.
+  \item \texttt{min\_samples = 8} : aligne la densit\'e minimale locale sur la taille minimale de cluster, ce qui stabilise davantage la partition finale.
   \item \texttt{selection = eom} (Excess of Mass) : pr\'eserve les petits clusters \`a c\^ot\'e des grands, contrairement \`a \texttt{leaf} qui fragmenterait davantage.
 \end{itemize}
 
 \begin{parambox}{Param\`etres HDBSCAN --- valeurs par d\'efaut}
 \begin{tabular}{lll}
 \texttt{clustering\_method} & \textbf{hdbscan} & M\'ethode de clustering final \\
-\texttt{hdbscan\_min\_cluster\_size} & \textbf{4} & Taille minimale d'un cluster \\
-\texttt{hdbscan\_min\_samples} & \textbf{2} & Points cores minimum \\
+\texttt{hdbscan\_min\_cluster\_size} & \textbf{8} & Taille minimale d'un cluster \\
+\texttt{hdbscan\_min\_samples} & \textbf{8} & Points cores minimum \\
 \texttt{hdbscan\_cluster\_selection\_method} & \textbf{eom} & Excess of Mass \\
 \texttt{hdbscan\_reassign\_noise} & \textbf{true} & R\'eassigner le bruit \\
 \texttt{cluster\_preprocess\_mode} & \textbf{none} & Pas de post-traitement \\
@@ -1182,11 +1187,11 @@ HDBSCAN effectue ensuite l'assignation des clusters en estimant la densit\'e loc
 
 Ce diagramme montre comment les diff\'erents signaux de gradient influencent l'encoder pendant la phase 2.
 
-\textbf{Signal 1 --- Reconstruction NB pond\'er\'ee} (signal principal) : le d\'ecodeur tente de reconstruire les raw counts $x_{ij}$ depuis $z$. Les gradients $\nabla_z \mathcal{L}_{NB}$ atteignent l'encoder via backpropagation. Gr\^ace aux poids $w_i$, les cellules rares g\'en\`erent une contribution plus forte au gradient, poussant l'encoder \`a mieux discriminer leur profil d'expression.
+\textbf{Signal 1 --- Reconstruction MSE pond\'er\'ee} (signal principal) : le d\'ecodeur tente de reconstruire la matrice pr\'etrait\'ee $x_{ij}$ depuis $z$. Les gradients $\nabla_z \mathcal{L}_{MSE}$ atteignent l'encoder via backpropagation. Gr\^ace aux poids $w_i$, les cellules rares g\'en\`erent une contribution plus forte au gradient, poussant l'encoder \`a mieux discriminer leur profil d'expression.
 
-\textbf{Signal 2 --- Triplet Loss} ($\lambda_{rare}$, \`a partir de l'\'ep.~$e_{\text{start}}$) : les gradients $\nabla_z \mathcal{L}_{triplet}$ s'appliquent directement sur $z$ (pas sur le d\'ecodeur). Ils imposent une \textbf{contrainte de s\'eparation locale} : les cellules rares (ancres) doivent \^etre plus proches de leurs alli\'ees que de leurs intrus dans $\mathbb{R}^{128}$, ind\'ependamment de la qualit\'e de reconstruction.
+\textbf{Signal 2 --- Triplet Loss} ($\lambda_{rare}$, \`a partir de l'\'ep.~$e_{\text{start}}$) : les gradients $\nabla_z \mathcal{L}_{triplet}$ s'appliquent directement sur $z$ (pas sur le d\'ecodeur). Ils imposent une \textbf{contrainte de s\'eparation locale} : les cellules rares (ancres) doivent \^etre plus proches de leurs alli\'ees que de leurs intrus dans $\mathbb{R}^{192}$, ind\'ependamment de la qualit\'e de reconstruction.
 
-\textbf{Interaction entre les deux signaux} : la reconstruction pond\'er\'ee agit globalement (tous les g\`enes de toutes les cellules), tandis que la Triplet Loss est locale (quelques triplets de cellules rares par mini-batch). Le param\`etre $\lambda_{rare}$ contr\^ole le rapport de force entre ces deux signaux : trop fort, la Triplet Loss d\'estabilise la reconstruction ; trop faible, elle ne structure pas assez l'espace latent. En configuration multi-batch, le gradient DANN s'ajoute comme troisi\`eme signal.
+\textbf{Interaction entre les deux signaux} : la reconstruction pond\'er\'ee agit globalement (tous les g\`enes de toutes les cellules), tandis que la Triplet Loss est locale (quelques triplets de cellules rares par mini-batch). Le param\`etre $\lambda_{rare}$ contr\^ole le rapport de force entre ces deux signaux : trop fort, la Triplet Loss d\'estabilise la reconstruction ; trop faible, elle ne structure pas assez l'espace latent. Dans la configuration par d\'efaut, le gradient DANN s'ajoute comme troisi\`eme signal \`a partir de l'\'epoque 55.
 
 \begin{figure}[H]
 \centering
@@ -1201,12 +1206,12 @@ Ce diagramme montre comment les diff\'erents signaux de gradient influencent l'e
 ]
 
 % Forward path
-\node[module, fill=enccolor!12] (enc) {\textbf{Encodeur}\\512$\to$256$\to$128};
-\node[module, fill=latentcolor!15, right=1.5cm of enc] (z) {\textbf{$z$}\\128 dim};
-\node[module, fill=deccolor!12, right=1.5cm of z] (dec) {\textbf{D\'ecodeur}\\128$\to$256$\to$512};
+\node[module, fill=enccolor!12] (enc) {\textbf{Encodeur}\\512$\to$256$\to$128$\to$192};
+\node[module, fill=latentcolor!15, right=1.5cm of enc] (z) {\textbf{$z$}\\192 dim};
+\node[module, fill=deccolor!12, right=1.5cm of z] (dec) {\textbf{D\'ecodeur}\\192$\to$128$\to$256$\to$512};
 
 % Losses
-\node[loss, fill=nbblue!12, right=1.5cm of dec] (lnb) {$\mathcal{L}_{NB}$\\pond\'er\'ee};
+\node[loss, fill=nbblue!12, right=1.5cm of dec] (lnb) {$\mathcal{L}_{MSE}$\\pond\'er\'ee};
 \node[loss, fill=tripletyellow!15, below=1.2cm of z] (ltri) {$\mathcal{L}_{triplet}$\\$\lambda=\lambda_{rare}$};
 
 % Forward arrows
@@ -1227,13 +1232,13 @@ Ce diagramme montre comment les diff\'erents signaux de gradient influencent l'e
 \node[draw, rounded corners=4pt, fill=white, font=\tiny, align=left, text width=5cm]
   at ($(enc)+(0,-3.5)$) {%
   \textbf{L\'egende des gradients :}\\
-  \textcolor{nbblue}{\rule{0.5cm}{2pt}} Reconstruction NB (principal)\\
+  \textcolor{nbblue}{\rule{0.5cm}{2pt}} Reconstruction MSE (principal)\\
   \textcolor{tripletyellow!80!black}{\rule{0.5cm}{2pt}} Triplet Loss (structuration locale)\\
-  \textcolor{dannred}{\rule{0.5cm}{2pt}} DANN (optionnel, multi-batch)};
+  \textcolor{dannred}{\rule{0.5cm}{2pt}} DANN (actif par d\'efaut)};
 
 \end{tikzpicture}%
 }
-\caption{Flux de gradients pendant la phase 2. Deux signaux principaux convergent vers l'encoder : (1) la reconstruction NB pond\'er\'ee (signal principal), (2) la Triplet Loss qui structure les cellules rares dans $z$. En multi-batch, le DANN ajoute un troisi\`eme signal.}
+\caption{Flux de gradients pendant la phase 2. Trois signaux convergent vers l'encoder : (1) la reconstruction MSE pond\'er\'ee, (2) la Triplet Loss qui structure les cellules rares dans $z$, et (3) le DANN activ\'e par d\'efaut pour la correction de batch.}
 \label{fig:gradients}
 \end{figure}
 
@@ -1261,19 +1266,19 @@ Ce diagramme montre comment les diff\'erents signaux de gradient influencent l'e
 
 \multicolumn{3}{l}{\cellcolor{enccolor!8}\textbf{Architecture r\'eseau}} \\
 \midrule
-\texttt{z\_dim} & 128 & Dimension de l'espace latent \\
+\texttt{z\_dim} & 192 & Dimension de l'espace latent \\
 \texttt{encoder\_layers} & 512,256,128 & Couches cach\'ees de l'encoder \\
 \texttt{decoder\_layers} & (sym\'etrique) & Miroir de l'encoder \\
 \texttt{activation} & leaky\_relu & Fonction d'activation \\
-\texttt{dropout} & 0.1 & Taux de dropout \\
+\texttt{dropout} & 0.3 & Taux de dropout \\
 
 \midrule
 \multicolumn{3}{l}{\cellcolor{phaseblue!8}\textbf{Entra\^inement}} \\
 \midrule
-\texttt{epochs} & 120 & \'Epoques totales \\
-\texttt{warmup\_epochs} & 30 & \'Epoques de warm-up \\
-\texttt{batch\_size} & 256 & Taille des mini-batches \\
-\texttt{lr} & 0.001 & Taux d'apprentissage (Adam) \\
+\texttt{epochs} & 210 & \'Epoques totales \\
+\texttt{warmup\_epochs} & 74 & \'Epoques de warm-up \\
+\texttt{batch\_size} & 192 & Taille des mini-batches \\
+\texttt{lr} & 0.00233670337683859 & Taux d'apprentissage (Adam) \\
 \texttt{scheduler} & CosineAnnealingLR & $\eta_{min} = \texttt{lr} \times 0.01$ \\
 \texttt{gradient clipping} & max\_norm=5.0 & Clip des gradients par norme \\
 \texttt{random\_state} & 42 & Graine al\'eatoire \\
@@ -1281,56 +1286,57 @@ Ce diagramme montre comment les diff\'erents signaux de gradient influencent l'e
 \midrule
 \multicolumn{3}{l}{\cellcolor{nbblue!8}\textbf{Reconstruction}} \\
 \midrule
-\texttt{reconstruction\_distribution} & nb & Distribution Negative Binomial \\
-\texttt{nb\_theta} & 10.0 & Dispersion NB (fixe) \\
+\texttt{reconstruction\_distribution} & mse & Reconstruction quadratique \\
+\texttt{nb\_theta} & 2.5815883941220323 & Dispersion NB si le mode NB est activ\'e \\
 \texttt{nb\_input\_transform} & log1p & Transformation d'entr\'ee encoder \\
-\texttt{masking\_rate} & 0.2 & Masquage 20\% (warm-up seul) \\
-\texttt{masked\_recon\_weight} & 0.75 & Poids r\'eduit positions masqu\'ees \\
-\texttt{masking\_apply\_weighted} & false & Masquage d\'esactiv\'e en phase 2 \\
+\texttt{masking\_rate} & 0.15 & Masquage 15\% \\
+\texttt{masked\_recon\_weight} & 0.8 & Poids des positions masqu\'ees \\
+\texttt{masking\_apply\_weighted} & true & Masquage actif en phase 2 \\
 
 \midrule
 \multicolumn{3}{l}{\cellcolor{weightpurple!8}\textbf{Pond\'eration dynamique}} \\
 \midrule
 \texttt{pseudo\_label\_method} & leiden & M\'ethode de pseudo-labeling \\
-\texttt{weight\_exponent} ($\alpha$) & 0.4 & Exposant inverse-fr\'equence \\
+\texttt{weight\_exponent} ($\alpha$) & 0.7 & Exposant inverse-fr\'equence \\
 \texttt{density\_knn\_k} & 15 & Voisins pour densit\'e locale \\
 \texttt{density\_weight\_exponent} ($\beta$) & 1.0 & Exposant distance kNN \\
-\texttt{density\_weight\_clip} & 5.0 & Clip max densit\'e \\
+\texttt{density\_weight\_clip} & 8.0 & Clip max densit\'e \\
 \texttt{weight\_fusion\_mode} & additive & Mode de fusion \\
-\texttt{cluster\_density\_alpha} ($\gamma$) & 0.6 & Ratio fr\'equence/densit\'e \\
-\texttt{min\_cell\_weight} & 0.25 & Poids minimum \\
-\texttt{max\_cell\_weight} & 10.0 & Poids maximum \\
+\texttt{cluster\_density\_alpha} ($\gamma$) & 0.3 & Ratio fr\'equence/densit\'e \\
+\texttt{min\_cell\_weight} & 0.45 & Poids minimum \\
+\texttt{max\_cell\_weight} & 8.0 & Poids maximum \\
 \texttt{dynamic\_weight\_update\_interval} & 10 & Recalcul tous les $N$ cycles \\
-\texttt{dynamic\_weight\_momentum} ($\mu$) & 0.7 & Inertie EMA \\
+\texttt{dynamic\_weight\_momentum} ($\mu$) & 0.85 & Inertie EMA \\
 
 \midrule
 \multicolumn{3}{l}{\cellcolor{tripletyellow!12}\textbf{R\'egularisation rare (Triplet)}} \\
 \midrule
 \texttt{rare\_loss\_type} & triplet & Type de perte rare \\
-\texttt{rare\_triplet\_weight} ($\lambda_{rare}$) & 0.1 & Poids dans la perte totale \\
+\texttt{rare\_triplet\_weight} ($\lambda_{rare}$) & 0.2346243650039478 & Poids dans la perte totale \\
 \texttt{rare\_triplet\_margin} ($m$) & 0.4 & Marge de s\'eparation \\
-\texttt{rare\_triplet\_min\_weight} & 1.2 & Seuil ancre \\
-\texttt{rare\_triplet\_start\_epoch} & 35 & \'Epoque d'activation \\
+\texttt{rare\_triplet\_min\_weight} & 1.8 & Seuil ancre \\
+\texttt{rare\_triplet\_start\_epoch} & 84 & \'Epoque d'activation \\
 \texttt{max\_triplet\_anchors\_per\_batch} & 64 & Ancres max par batch \\
 
 \midrule
 \multicolumn{3}{l}{\cellcolor{clustergreen!8}\textbf{Clustering HDBSCAN}} \\
 \midrule
 \texttt{clustering\_method} & hdbscan & M\'ethode de clustering final \\
-\texttt{hdbscan\_min\_cluster\_size} & 4 & Taille minimale de cluster \\
-\texttt{hdbscan\_min\_samples} & 2 & Points cores minimum \\
+\texttt{hdbscan\_min\_cluster\_size} & 8 & Taille minimale de cluster \\
+\texttt{hdbscan\_min\_samples} & 8 & Points cores minimum \\
 \texttt{hdbscan\_cluster\_selection\_method} & eom & Excess of Mass \\
 \texttt{hdbscan\_reassign\_noise} & true & R\'eassigner le bruit \\
 \texttt{cluster\_preprocess\_mode} & none & Pas de post-traitement \\
 
 \midrule
-\multicolumn{3}{l}{\cellcolor{dannred!8}\textbf{Correction de batch (optionnelle)}} \\
+\multicolumn{3}{l}{\cellcolor{dannred!8}\textbf{Correction de batch}} \\
 \midrule
-\texttt{use\_batch\_conditioning} & false & Conditionner le d\'ecodeur sur le batch \\
-\texttt{adversarial\_batch\_weight} ($\lambda_{adv}$) & 0.0 & Poids DANN (0 = d\'esactiv\'e) \\
-\texttt{adversarial\_lambda} & 1.0 & \'Echelle du gradient reversal \\
-\texttt{adversarial\_start\_epoch} & 0 & \'Epoque de d\'emarrage du DANN \\
-\texttt{adversarial\_ramp\_epochs} & 0 & Dur\'ee du ramp-up DANN \\
+\texttt{use\_batch\_conditioning} & true & Activer la correction adversariale \\
+\texttt{batch\_correction\_key} & batch & Colonne \texttt{obs} utilis\'ee pour le batch \\
+\texttt{adversarial\_batch\_weight} ($\lambda_{adv}$) & 0.056150696336115635 & Poids DANN \\
+\texttt{adversarial\_lambda} & 1.75 & \'Echelle du gradient reversal \\
+\texttt{adversarial\_start\_epoch} & 55 & \'Epoque de d\'emarrage du DANN \\
+\texttt{adversarial\_ramp\_epochs} & 60 & Dur\'ee du ramp-up DANN \\
 \texttt{mmd\_batch\_weight} & 0.0 & Poids MMD (0 = d\'esactiv\'e) \\
 
 
@@ -1365,11 +1371,11 @@ Le tableau ci-dessus pr\'esente les \textbf{valeurs par d\'efaut} des param\`etr
 
 \node[stage, fill=blue!6, below=of input] (preproc) {\textbf{Pr\'etraitement (Scanpy)}\\Norm + HVG + Scale};
 
-\node[stage, fill=phaseblue!10, below=of preproc] (warmup) {\textbf{Phase 1 : Warm-up}\\30 \'epoques (0--29)};
+\node[stage, fill=phaseblue!10, below=of preproc] (warmup) {\textbf{Phase 1 : Warm-up}\\74 \'epoques (0--73)};
 
-\node[stage, fill=phaseorange!12, below=of warmup] (weighted) {\textbf{Phase 2 : Pond\'er\'ee}\\90 \'epoques (30--119)};
+\node[stage, fill=phaseorange!12, below=of warmup] (weighted) {\textbf{Phase 2 : Pond\'er\'ee}\\136 \'epoques (74--209)};
 
-\node[stage, fill=clustergreen!12, below=of weighted] (cluster) {\textbf{Phase 3 : HDBSCAN}\\sur espace latent 128D};
+\node[stage, fill=clustergreen!12, below=of weighted] (cluster) {\textbf{Phase 3 : HDBSCAN}\\sur espace latent 192D};
 
 \node[stage, fill=successgreen!15, below=of cluster] (output) {\textbf{Labels finaux}\\$k$ clusters d\'etect\'es};
 
@@ -1382,20 +1388,20 @@ Le tableau ci-dessus pr\'esente les \textbf{valeurs par d\'efaut} des param\`etr
 
 % Detail boxes
 \node[detail, right=1.5cm of warmup] (warmup_d) {%
-  $\bullet$ NB uniforme ($w_i=1$), 30 \'ep.\\
-  $\bullet$ Masquage 20\% actif (per mini-batch)\\
-  $\bullet$ DANN optionnel (multi-batch)\\
-  $\bullet$ lr=0.001, batch=256};
+  $\bullet$ MSE uniforme ($w_i=1$), 74 \'ep.\\
+  $\bullet$ Masquage 15\% actif (per mini-batch)\\
+  $\bullet$ DANN activ\'e d\`es l'\'ep. 55\\
+  $\bullet$ lr=0.0023367, batch=192};
 
 \node[detail, right=1.5cm of weighted] (weighted_d) {%
-  $\bullet$ NB pond\'er\'ee : $\sum w_i \mathcal{L}_{NB}$\\
+  $\bullet$ MSE pond\'er\'ee : $\sum w_i \mathcal{L}_{MSE}$\\
   $\bullet$ Poids dynamiques $\Delta$10 \'ep. EMA($\mu$)\\
-  $\bullet$ Triplet d\`es \'ep. $e_{\text{start}}$ ($\lambda_{rare}$)\\
-  $\bullet$ Masquage d\'esactiv\'e en phase 2\\
-  $\bullet$ DANN optionnel (multi-batch)};
+  $\bullet$ Triplet d\`es l'\'ep. 84 ($\lambda_{rare}=0.2346$)\\
+  $\bullet$ Masquage conserv\'e en phase 2\\
+  $\bullet$ DANN actif, ramp-up 60 \'ep.};
 
 \node[detail, right=1.5cm of cluster] (cluster_d) {%
-  $\bullet$ HDBSCAN c4s2, EOM\\
+  $\bullet$ HDBSCAN c8s8, EOM\\
   $\bullet$ Pas de post-traitement\\
   $\bullet$ Bruit $\to$ plus proche cluster\\
   $\bullet$ $k$ d\'etect\'e automatiquement};
@@ -1412,7 +1418,7 @@ Le tableau ci-dessus pr\'esente les \textbf{valeurs par d\'efaut} des param\`etr
   $\bullet$ $w_{freq} = (1/f)^{\alpha}$\\
   $\bullet$ $w_{dens} = (d_{kNN}/\text{m\'ed})^{\beta}$\\
   $\bullet$ Fusion : $\gamma \cdot freq + (1-\gamma) \cdot dens$\\
-  $\bullet$ Momentum $\mu$, clip [0.25, 10]};
+  $\bullet$ Momentum $\mu$, clip [0.45, 8]};
 
 \draw[darr, weightpurple] (weight_d.east) -- (weighted.west);
 \draw[darr, weightpurple] (weighted.south west) |- ++(0,-0.3) -| (weight_d.south) node[near start, below, font=\tiny, text=weightpurple]{MAJ $\Delta$10 \'ep.};
@@ -1428,13 +1434,13 @@ Le tableau ci-dessus pr\'esente les \textbf{valeurs par d\'efaut} des param\`etr
 \label{sec:conclusion}
 % =============================================================================
 
-scRAW repose sur les composants suivants :
+Dans sa configuration par d\'efaut actuelle, scRAW repose sur les composants suivants :
 
 \begin{enumerate}[nosep]
-  \item \textbf{Reconstruction} : distribution Negative Binomial sur les raw counts, avec entr\'ee transform\'ee (log1p) et masquage stochastique pendant la phase de warm-up.
+  \item \textbf{Reconstruction} : perte MSE sur la matrice pr\'etrait\'ee, avec masquage stochastique conserv\'e pendant le warm-up puis la phase pond\'er\'ee.
   \item \textbf{Pond\'eration dynamique} : calcul bicrit\`ere combinant fr\'equence de pseudo-cluster et densit\'e locale, mis \`a jour p\'eriodiquement avec stabilisation EMA.
   \item \textbf{Contrainte latente} : Triplet Loss avec semi-hard mining, ciblant les cellules rares, activ\'ee progressivement via un ramp-up lin\'eaire.
-  \item \textbf{Correction batch} : module DANN optionnel, activable en configuration multi-batch.
+  \item \textbf{Correction batch} : module DANN activ\'e par d\'efaut sur la cl\'e \texttt{batch}, avec d\'emarrage \`a l'\'epoque 55.
   \item \textbf{Clustering} : HDBSCAN appliqu\'e directement sur l'espace latent, avec r\'eassignation du bruit.
 \end{enumerate}
 
