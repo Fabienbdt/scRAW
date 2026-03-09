@@ -11,6 +11,7 @@ import torch.nn as nn
 
 from ..core.algorithm_registry import AlgorithmInfo, BaseAlgorithm
 from ..core.config import HyperparameterConfig, ParamType
+from ..defaults import DEFAULT_PARAM_OVERRIDES
 
 
 class _GradientReversalFunction(torch.autograd.Function):
@@ -148,7 +149,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 name="hidden_layers",
                 display_name="Hidden Layers",
                 param_type=ParamType.STRING,
-                default="512,256,128",
+                default=str(DEFAULT_PARAM_OVERRIDES["hidden_layers"]),
                 description="Comma-separated hidden layer sizes.",
                 category="Network",
             ),
@@ -156,7 +157,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 name="z_dim",
                 display_name="Latent Dimension",
                 param_type=ParamType.INTEGER,
-                default=128,
+                default=int(DEFAULT_PARAM_OVERRIDES["z_dim"]),
                 min_value=2,
                 max_value=512,
                 description="Latent embedding size.",
@@ -166,7 +167,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 name="dropout",
                 display_name="Dropout",
                 param_type=ParamType.FLOAT,
-                default=0.1,
+                default=float(DEFAULT_PARAM_OVERRIDES["dropout"]),
                 min_value=0.0,
                 max_value=0.8,
                 description="Dropout used in encoder/decoder.",
@@ -176,7 +177,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 name="epochs",
                 display_name="Epochs",
                 param_type=ParamType.INTEGER,
-                default=120,
+                default=int(DEFAULT_PARAM_OVERRIDES["epochs"]),
                 min_value=1,
                 max_value=2000,
                 description="Total training epochs.",
@@ -186,7 +187,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 name="warmup_epochs",
                 display_name="Warm-up Epochs",
                 param_type=ParamType.INTEGER,
-                default=30,
+                default=int(DEFAULT_PARAM_OVERRIDES["warmup_epochs"]),
                 min_value=0,
                 max_value=1000,
                 description="Number of warm-up epochs without weighted loss.",
@@ -196,7 +197,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 name="batch_size",
                 display_name="Batch Size",
                 param_type=ParamType.INTEGER,
-                default=256,
+                default=int(DEFAULT_PARAM_OVERRIDES["batch_size"]),
                 min_value=8,
                 max_value=8192,
                 description="Mini-batch size.",
@@ -206,7 +207,7 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
                 name="lr",
                 display_name="Learning Rate",
                 param_type=ParamType.FLOAT,
-                default=1e-3,
+                default=float(DEFAULT_PARAM_OVERRIDES["lr"]),
                 min_value=1e-6,
                 max_value=1.0,
                 description="Optimizer learning rate.",
@@ -235,10 +236,15 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         # Lit les hyperparamètres réseau puis instancie l'autoencodeur MLP.
         shape = NetworkShape(
             input_dim=int(input_dim),
-            hidden_layers=parse_hidden_layers(self.params.get("hidden_layers", "512,256,128")),
-            z_dim=int(self.params.get("z_dim", 128)),
+            hidden_layers=parse_hidden_layers(
+                self.params.get("hidden_layers", DEFAULT_PARAM_OVERRIDES["hidden_layers"])
+            ),
+            z_dim=int(self.params.get("z_dim", DEFAULT_PARAM_OVERRIDES["z_dim"])),
         )
-        model = MLPAutoencoder(shape=shape, dropout=float(self.params.get("dropout", 0.1)))
+        model = MLPAutoencoder(
+            shape=shape,
+            dropout=float(self.params.get("dropout", DEFAULT_PARAM_OVERRIDES["dropout"])),
+        )
         self.model = model
         return model
 
@@ -261,7 +267,10 @@ class BaseAutoencoderAlgorithm(BaseAlgorithm):
         out = (
             np.concatenate(parts, axis=0)
             if parts
-            else np.zeros((0, int(self.params.get("z_dim", 128))), dtype=np.float32)
+            else np.zeros(
+                (0, int(self.params.get("z_dim", DEFAULT_PARAM_OVERRIDES["z_dim"]))),
+                dtype=np.float32,
+            )
         )
 
         # Preserve caller context: _encode_numpy is used during training for

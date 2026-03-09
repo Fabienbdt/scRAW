@@ -23,6 +23,7 @@ import torch.nn as nn
 
 from ..core.algorithm_registry import AlgorithmInfo, AlgorithmRegistry
 from ..core.config import HyperparameterConfig, ParamType
+from ..defaults import DEFAULT_PARAM_OVERRIDES
 from .base_autoencoder import BaseAutoencoderAlgorithm, gradient_reversal
 from .scraw_clustering import ScrawClusteringMixin
 from .scraw_losses_and_weights import ScrawLossWeightMixin
@@ -81,7 +82,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="hdbscan_min_cluster_size",
                     display_name="HDBSCAN Min Cluster Size",
                     param_type=ParamType.INTEGER,
-                    default=4,
+                    default=int(DEFAULT_PARAM_OVERRIDES["hdbscan_min_cluster_size"]),
                     min_value=2,
                     max_value=200,
                     description="Minimum cluster size for HDBSCAN.",
@@ -91,7 +92,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="hdbscan_min_samples",
                     display_name="HDBSCAN Min Samples",
                     param_type=ParamType.INTEGER,
-                    default=2,
+                    default=int(DEFAULT_PARAM_OVERRIDES["hdbscan_min_samples"]),
                     min_value=1,
                     max_value=200,
                     description="Min samples for HDBSCAN core points.",
@@ -139,7 +140,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="weight_exponent",
                     display_name="Cluster Weight Exponent",
                     param_type=ParamType.FLOAT,
-                    default=0.4,
+                    default=float(DEFAULT_PARAM_OVERRIDES["weight_exponent"]),
                     min_value=0.0,
                     max_value=4.0,
                     description="Exponent for inverse-frequency cluster weighting.",
@@ -149,7 +150,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="cluster_density_alpha",
                     display_name="Density Mix Alpha",
                     param_type=ParamType.FLOAT,
-                    default=0.6,
+                    default=float(DEFAULT_PARAM_OVERRIDES["cluster_density_alpha"]),
                     min_value=0.0,
                     max_value=1.0,
                     description="Blend ratio between cluster and density weights.",
@@ -181,7 +182,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="density_weight_clip",
                     display_name="Density Weight Clip",
                     param_type=ParamType.FLOAT,
-                    default=5.0,
+                    default=float(DEFAULT_PARAM_OVERRIDES["density_weight_clip"]),
                     min_value=0.1,
                     max_value=100.0,
                     description="Maximum density-derived weight before normalization.",
@@ -224,7 +225,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="min_cell_weight",
                     display_name="Min Cell Weight",
                     param_type=ParamType.FLOAT,
-                    default=0.25,
+                    default=float(DEFAULT_PARAM_OVERRIDES["min_cell_weight"]),
                     min_value=0.0,
                     max_value=100.0,
                     description="Lower bound for per-cell reconstruction weights.",
@@ -234,7 +235,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="max_cell_weight",
                     display_name="Max Cell Weight",
                     param_type=ParamType.FLOAT,
-                    default=10.0,
+                    default=float(DEFAULT_PARAM_OVERRIDES["max_cell_weight"]),
                     min_value=0.1,
                     max_value=100.0,
                     description="Upper bound for per-cell reconstruction weights.",
@@ -255,7 +256,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="dynamic_weight_momentum",
                     display_name="Weight Momentum",
                     param_type=ParamType.FLOAT,
-                    default=0.7,
+                    default=float(DEFAULT_PARAM_OVERRIDES["dynamic_weight_momentum"]),
                     min_value=0.0,
                     max_value=1.0,
                     description="EMA momentum for weight updates across epochs.",
@@ -266,7 +267,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="reconstruction_distribution",
                     display_name="Reconstruction Loss",
                     param_type=ParamType.CHOICE,
-                    default="nb",
+                    default=str(DEFAULT_PARAM_OVERRIDES["reconstruction_distribution"]),
                     choices=["nb", "mse"],
                     description="Reconstruction objective.",
                     category="Reconstruction",
@@ -275,7 +276,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="nb_theta",
                     display_name="NB Theta",
                     param_type=ParamType.FLOAT,
-                    default=10.0,
+                    default=float(DEFAULT_PARAM_OVERRIDES["nb_theta"]),
                     min_value=1e-3,
                     max_value=1e4,
                     description="Dispersion parameter for NB loss.",
@@ -318,7 +319,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="masking_rate",
                     display_name="Masking Rate",
                     param_type=ParamType.FLOAT,
-                    default=0.2,
+                    default=float(DEFAULT_PARAM_OVERRIDES["masking_rate"]),
                     min_value=0.0,
                     max_value=0.95,
                     description="Fraction of features masked at input during training.",
@@ -329,7 +330,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="masking_apply_weighted",
                     display_name="Masking In Weighted Phase",
                     param_type=ParamType.BOOLEAN,
-                    default=False,
+                    default=bool(DEFAULT_PARAM_OVERRIDES["masking_apply_weighted"]),
                     description="If false, masking is only applied in warm-up phase.",
                     category="Reconstruction",
                     advanced=True,
@@ -338,7 +339,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="masked_recon_weight",
                     display_name="Masked Recon Weight",
                     param_type=ParamType.FLOAT,
-                    default=0.75,
+                    default=float(DEFAULT_PARAM_OVERRIDES["masked_recon_weight"]),
                     min_value=0.0,
                     max_value=1.0,
                     description="Relative weight of masked positions in reconstruction loss.",
@@ -370,7 +371,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="rare_triplet_weight",
                     display_name="Triplet Weight",
                     param_type=ParamType.FLOAT,
-                    default=0.10,
+                    default=float(DEFAULT_PARAM_OVERRIDES["rare_triplet_weight"]),
                     min_value=0.0,
                     max_value=100.0,
                     description="Triplet regularization strength.",
@@ -380,7 +381,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="rare_triplet_start_epoch",
                     display_name="Triplet Start Epoch",
                     param_type=ParamType.INTEGER,
-                    default=35,
+                    default=int(DEFAULT_PARAM_OVERRIDES["rare_triplet_start_epoch"]),
                     min_value=-1,
                     max_value=2000,
                     description="Epoch from which triplet loss is enabled.",
@@ -402,7 +403,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="rare_triplet_min_weight",
                     display_name="Triplet Min Weight",
                     param_type=ParamType.FLOAT,
-                    default=1.2,
+                    default=float(DEFAULT_PARAM_OVERRIDES["rare_triplet_min_weight"]),
                     min_value=0.0,
                     max_value=100.0,
                     description="Minimum cell weight to be considered as rare anchor.",
@@ -424,7 +425,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="use_batch_conditioning",
                     display_name="Use DANN",
                     param_type=ParamType.BOOLEAN,
-                    default=False,
+                    default=bool(DEFAULT_PARAM_OVERRIDES["use_batch_conditioning"]),
                     description="Enable adversarial batch conditioning.",
                     category="Batch",
                 ),
@@ -432,7 +433,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="batch_correction_key",
                     display_name="Batch Key",
                     param_type=ParamType.STRING,
-                    default="auto",
+                    default=str(DEFAULT_PARAM_OVERRIDES["batch_correction_key"]),
                     description="obs key containing batch labels.",
                     category="Batch",
                     advanced=True,
@@ -441,7 +442,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="adversarial_batch_weight",
                     display_name="DANN Weight",
                     param_type=ParamType.FLOAT,
-                    default=0.0,
+                    default=float(DEFAULT_PARAM_OVERRIDES["adversarial_batch_weight"]),
                     min_value=0.0,
                     max_value=100.0,
                     description="Weight of adversarial batch classification loss.",
@@ -451,7 +452,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="adversarial_lambda",
                     display_name="GRL Lambda",
                     param_type=ParamType.FLOAT,
-                    default=1.0,
+                    default=float(DEFAULT_PARAM_OVERRIDES["adversarial_lambda"]),
                     min_value=0.0,
                     max_value=10.0,
                     description="Gradient reversal scale.",
@@ -462,7 +463,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="adversarial_start_epoch",
                     display_name="DANN Start Epoch",
                     param_type=ParamType.INTEGER,
-                    default=0,
+                    default=int(DEFAULT_PARAM_OVERRIDES["adversarial_start_epoch"]),
                     min_value=0,
                     max_value=2000,
                     description="Epoch where adversarial branch starts.",
@@ -473,7 +474,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     name="adversarial_ramp_epochs",
                     display_name="DANN Ramp Epochs",
                     param_type=ParamType.INTEGER,
-                    default=0,
+                    default=int(DEFAULT_PARAM_OVERRIDES["adversarial_ramp_epochs"]),
                     min_value=0,
                     max_value=2000,
                     description="Linear ramp length for DANN weight/lambda.",
@@ -855,8 +856,16 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
 
         Returns `(batch_ids, n_batches, key_used)`.
         """
-        use_batch = bool(self._param("use_batch_conditioning", False))
-        adv_w = float(self._param("adversarial_batch_weight", 0.0) or 0.0)
+        use_batch = bool(
+            self._param("use_batch_conditioning", DEFAULT_PARAM_OVERRIDES["use_batch_conditioning"])
+        )
+        adv_w = float(
+            self._param(
+                "adversarial_batch_weight",
+                DEFAULT_PARAM_OVERRIDES["adversarial_batch_weight"],
+            )
+            or 0.0
+        )
         mmd_w = float(self._param("mmd_batch_weight", 0.0) or 0.0)
         # `want_batch` active la recherche de colonne batch même si `use_batch=False`
         # dès qu'une pénalité batch (adv/mmd) est non nulle.
@@ -871,7 +880,9 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             return None, 1, None
 
         obs_cols = list(data.obs.columns)
-        requested = str(self._param("batch_correction_key", "auto")).strip()
+        requested = str(
+            self._param("batch_correction_key", DEFAULT_PARAM_OVERRIDES["batch_correction_key"])
+        ).strip()
         if not requested:
             requested = "auto"
 
@@ -963,7 +974,13 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         Falls back to chunked numpy path when model is absent.
         """
         if self.model is None:
-            return self._encode_numpy(X, batch_size=max(512, int(self._param("batch_size", 256))))
+            return self._encode_numpy(
+                X,
+                batch_size=max(
+                    512,
+                    int(self._param("batch_size", DEFAULT_PARAM_OVERRIDES["batch_size"])),
+                ),
+            )
 
         device = torch.device(self.get_device())
         self.model.to(device)
@@ -1047,8 +1064,16 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         device = torch.device(self.get_device())
         model.to(device)
 
-        use_batch = bool(self._param("use_batch_conditioning", False))
-        adv_weight = float(self._param("adversarial_batch_weight", 0.0) or 0.0)
+        use_batch = bool(
+            self._param("use_batch_conditioning", DEFAULT_PARAM_OVERRIDES["use_batch_conditioning"])
+        )
+        adv_weight = float(
+            self._param(
+                "adversarial_batch_weight",
+                DEFAULT_PARAM_OVERRIDES["adversarial_batch_weight"],
+            )
+            or 0.0
+        )
 
         batch_head: Optional[nn.Module] = None
         # La tête adversariale batch n'est instanciée que si:
@@ -1057,7 +1082,7 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
         # - au moins 2 batches existent (sinon classification impossible).
         if use_batch and adv_weight > 0.0 and n_batches >= 2:
             # Tête de classification batch utilisée avec gradient reversal.
-            z_dim = int(self._param("z_dim", 128))
+            z_dim = int(self._param("z_dim", DEFAULT_PARAM_OVERRIDES["z_dim"]))
             hidden = max(8, z_dim // 2)
             batch_head = nn.Sequential(
                 nn.Linear(z_dim, hidden),
@@ -1073,26 +1098,40 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
             params += list(batch_head.parameters())
 
         # --- Étape 5: configuration optimisation / planning ---
-        lr = float(self._param("lr", 1e-3))
+        lr = float(self._param("lr", DEFAULT_PARAM_OVERRIDES["lr"]))
         optimizer = torch.optim.Adam(params, lr=lr)
 
-        epochs = int(self._param("epochs", 120))
+        epochs = int(self._param("epochs", DEFAULT_PARAM_OVERRIDES["epochs"]))
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=max(1, epochs), eta_min=lr * 0.01
         )
-        warmup = int(self._param("warmup_epochs", 30))
-        batch_size = int(self._param("batch_size", 256))
-        mask_rate = float(self._param("masking_rate", 0.2))
-        mask_in_weighted = bool(self._param("masking_apply_weighted", False))
-        masked_recon_weight = float(np.clip(self._param("masked_recon_weight", 0.75), 0.0, 1.0))
+        warmup = int(self._param("warmup_epochs", DEFAULT_PARAM_OVERRIDES["warmup_epochs"]))
+        batch_size = int(self._param("batch_size", DEFAULT_PARAM_OVERRIDES["batch_size"]))
+        mask_rate = float(self._param("masking_rate", DEFAULT_PARAM_OVERRIDES["masking_rate"]))
+        mask_in_weighted = bool(
+            self._param("masking_apply_weighted", DEFAULT_PARAM_OVERRIDES["masking_apply_weighted"])
+        )
+        masked_recon_weight = float(
+            np.clip(
+                self._param("masked_recon_weight", DEFAULT_PARAM_OVERRIDES["masked_recon_weight"]),
+                0.0,
+                1.0,
+            )
+        )
         masking_value = float(self._param("masking_value", 0.0))
 
         update_interval = int(self._param("dynamic_weight_update_interval", 10))
-        momentum = float(self._param("dynamic_weight_momentum", 0.7))
+        momentum = float(
+            self._param("dynamic_weight_momentum", DEFAULT_PARAM_OVERRIDES["dynamic_weight_momentum"])
+        )
         momentum = float(np.clip(momentum, 0.0, 1.0))
 
-        triplet_weight = float(self._param("rare_triplet_weight", 0.10))
-        raw_triplet_start = int(self._param("rare_triplet_start_epoch", 35))
+        triplet_weight = float(
+            self._param("rare_triplet_weight", DEFAULT_PARAM_OVERRIDES["rare_triplet_weight"])
+        )
+        raw_triplet_start = int(
+            self._param("rare_triplet_start_epoch", DEFAULT_PARAM_OVERRIDES["rare_triplet_start_epoch"])
+        )
         triplet_start = raw_triplet_start if raw_triplet_start >= 0 else warmup
 
         capture = bool(self._param("capture_embedding_snapshots", False))
@@ -1337,8 +1376,12 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
                     mean_w = float(np.mean(mixed))
                     if np.isfinite(mean_w) and mean_w > 0.0:
                         mixed = mixed / mean_w
-                    w_min = float(self._param("min_cell_weight", 0.25))
-                    w_max = float(self._param("max_cell_weight", 10.0))
+                    w_min = float(
+                        self._param("min_cell_weight", DEFAULT_PARAM_OVERRIDES["min_cell_weight"])
+                    )
+                    w_max = float(
+                        self._param("max_cell_weight", DEFAULT_PARAM_OVERRIDES["max_cell_weight"])
+                    )
                     if w_max < w_min:
                         w_max = w_min
                     current_weights = np.clip(mixed, w_min, w_max).astype(np.float32)
@@ -1432,16 +1475,29 @@ class ScRAWAlgorithm(BaseAutoencoderAlgorithm, ScrawLossWeightMixin, ScrawCluste
 
                 adv_loss = torch.tensor(0.0, device=device)
                 if batch_head is not None and batch_ids_np is not None and adv_weight > 0.0:
-                    adv_start_epoch = int(self._param("adversarial_start_epoch", 0))
+                    adv_start_epoch = int(
+                        self._param(
+                            "adversarial_start_epoch",
+                            DEFAULT_PARAM_OVERRIDES["adversarial_start_epoch"],
+                        )
+                    )
                     # Adversarial branch can start later than reconstruction.
                     if epoch >= adv_start_epoch:
                         # Linear ramp stabilizes adversarial signal at startup.
-                        ramp_epochs = int(self._param("adversarial_ramp_epochs", 0) or 0)
+                        ramp_epochs = int(
+                            self._param(
+                                "adversarial_ramp_epochs",
+                                DEFAULT_PARAM_OVERRIDES["adversarial_ramp_epochs"],
+                            )
+                            or 0
+                        )
                         if ramp_epochs > 0:
                             frac = min(1.0, (epoch - adv_start_epoch + 1) / float(ramp_epochs))
                         else:
                             frac = 1.0
-                        lam = float(self._param("adversarial_lambda", 1.0)) * frac
+                        lam = float(
+                            self._param("adversarial_lambda", DEFAULT_PARAM_OVERRIDES["adversarial_lambda"])
+                        ) * frac
                         logits = batch_head(gradient_reversal(z, lambda_=lam))
                         # Cible batch locale correspondant aux indices de mini-batch.
                         yb = torch.tensor(batch_ids_np[idx], dtype=torch.long, device=device)

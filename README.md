@@ -21,13 +21,37 @@ cd /Users/fabienbidet/Documents/MASTER\ 2/STAGE/scRAW
 python -m pip install -e .
 ```
 
-## Exécution
+## Lancement rapide
+
+Commande minimale:
+
+```bash
+scraw-run \
+  --data data/baron_human_pancreas.h5ad \
+  --output results/demo_run
+```
+
+Cette commande:
+
+- utilise automatiquement le preset `default`
+- choisit automatiquement le device (`--device auto`)
+- lance le preprocessing, l'entraînement, le clustering final, le calcul des métriques et la génération des figures
+
+Si tu ne veux pas installer la commande `scraw-run`, tu peux lancer exactement la même run avec le wrapper local:
+
+```bash
+python run_scraw_dedicated.py \
+  --data data/baron_human_pancreas.h5ad \
+  --output results/demo_run
+```
+
+## Commande standard
 
 Option 1 (commande installée):
 
 ```bash
 scraw-run \
-  --preset baron_best \
+  --preset default \
   --data /chemin/dataset.h5ad \
   --output /chemin/output_run \
   --device cpu
@@ -37,10 +61,49 @@ Option 2 (wrapper local):
 
 ```bash
 python run_scraw_dedicated.py \
-  --preset baron_best \
+  --preset default \
   --data /chemin/dataset.h5ad \
   --output /chemin/output_run \
   --device cpu
+```
+
+Si `--preset` est omis, la CLI utilise désormais le preset `default`.
+
+## Arguments utiles
+
+- `--data` : chemin vers le fichier `.h5ad` d'entrée
+- `--output` : dossier de sortie de la run
+- `--device auto|cpu|cuda|mps` : choix du device, `auto` par défaut
+- `--preset default|baron_best|pancreas_best` : configuration de départ
+- `--verbose` : affiche les logs détaillés pendant l'exécution
+
+## Cas fréquents
+
+Dataset sans colonne batch compatible avec DANN:
+
+```bash
+scraw-run \
+  --data /chemin/dataset.h5ad \
+  --output /chemin/output_run \
+  --dann off
+```
+
+Dataset multi-batch avec une colonne batch qui ne s'appelle pas `batch`:
+
+```bash
+scraw-run \
+  --data /chemin/dataset.h5ad \
+  --output /chemin/output_run \
+  --batch-key study
+```
+
+Run plus lisible dans le terminal:
+
+```bash
+scraw-run \
+  --data /chemin/dataset.h5ad \
+  --output /chemin/output_run \
+  --verbose
 ```
 
 ## Sorties

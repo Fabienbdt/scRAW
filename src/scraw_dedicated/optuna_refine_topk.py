@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from .presets import PRESETS
+
 
 SCORE_WEIGHTS: Dict[str, float] = {
     "ARI": 0.30,
@@ -244,7 +246,7 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Parse CLI args."""
     p = argparse.ArgumentParser(description="Refine top-k Optuna scRAW trials with multi-seed reruns.")
     p.add_argument("--search-root", required=True, help="Optuna search root (contains summaries/all_trials.csv)")
-    p.add_argument("--preset", required=True, choices=["baron_best", "pancreas_best"])
+    p.add_argument("--preset", required=True, choices=sorted(PRESETS.keys()))
     p.add_argument("--data", required=True, help="Input .h5ad file")
     p.add_argument("--output-root", default=None, help="Refinement output root")
     p.add_argument("--python-bin", default=sys.executable)

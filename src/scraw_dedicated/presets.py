@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Strict scRAW presets derived from reference best runs.
+"""Strict scRAW presets.
 
-Only parameters used in the target Baron/Pancreas reference runs are exposed.
+Includes the default tuned standalone configuration plus legacy Baron/Pancreas
+reference presets.
 """
 
 from __future__ import annotations
@@ -9,6 +10,13 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict
+
+from .defaults import (
+    DEFAULT_PRESET_NAME,
+    DEFAULT_TRIAL_CONFIGURATION,
+    copy_default_algorithm_params,
+    copy_default_preprocessing,
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +100,17 @@ def _merge(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
 
 
 PRESETS: Dict[str, ScrawPreset] = {
+    DEFAULT_PRESET_NAME: ScrawPreset(
+        name=DEFAULT_PRESET_NAME,
+        description=(
+            "Default scRAW configuration from Optuna trial "
+            f"{DEFAULT_TRIAL_CONFIGURATION['trial_number']} "
+            "(HDBSCAN final clustering, Leiden pseudo-labels, DANN enabled on batch)."
+        ),
+        preprocessing=copy_default_preprocessing(),
+        algorithm_params=copy_default_algorithm_params(),
+        supports_dann=True,
+    ),
     "baron_best": ScrawPreset(
         name="baron_best",
         description=(

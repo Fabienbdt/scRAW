@@ -17,6 +17,8 @@ import logging
 import numpy as np
 import torch
 
+from ..defaults import DEFAULT_PARAM_OVERRIDES
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +99,16 @@ class ScrawLossWeightMixin:
           loss aligned with counts-based likelihood while preserving backward
           compatibility for setups where only `adata.X` exists.
         """
-        dist = str(self._param("reconstruction_distribution", "nb")).strip().lower()
-        transform = str(self._param("nb_input_transform", "log1p")).strip().lower()
-        theta = float(self._param("nb_theta", 10.0))
+        dist = str(
+            self._param(
+                "reconstruction_distribution",
+                DEFAULT_PARAM_OVERRIDES["reconstruction_distribution"],
+            )
+        ).strip().lower()
+        transform = str(
+            self._param("nb_input_transform", DEFAULT_PARAM_OVERRIDES["nb_input_transform"])
+        ).strip().lower()
+        theta = float(self._param("nb_theta", DEFAULT_PARAM_OVERRIDES["nb_theta"]))
         residual_clip = float(self._param("pearson_residual_clip", 10.0))
 
         if dist != "nb":
@@ -162,8 +171,10 @@ class ScrawLossWeightMixin:
         # Entrée encodeur transformée selon `nb_input_transform`.
         X_model = self._transform_nb_input(
             counts=counts,
-            transform=str(self._param("nb_input_transform", "log1p")),
-            theta=float(self._param("nb_theta", 10.0)),
+            transform=str(
+                self._param("nb_input_transform", DEFAULT_PARAM_OVERRIDES["nb_input_transform"])
+            ),
+            theta=float(self._param("nb_theta", DEFAULT_PARAM_OVERRIDES["nb_theta"])),
             residual_clip=float(self._param("pearson_residual_clip", 10.0)),
         )
 
@@ -193,7 +204,10 @@ class ScrawLossWeightMixin:
         if n == 0:
             return np.zeros(0, dtype=np.float32)
 
-        exp = max(0.0, float(self._param("weight_exponent", 0.4)))
+        exp = max(
+            0.0,
+            float(self._param("weight_exponent", DEFAULT_PARAM_OVERRIDES["weight_exponent"])),
+        )
         if exp == 0.0:
             # Exposant nul => toutes les cellules ont le même poids.
             return np.ones(n, dtype=np.float32)
@@ -227,7 +241,9 @@ class ScrawLossWeightMixin:
         k = int(self._param("density_knn_k", 15) or 15)
         k = max(2, min(k, n - 1))
         exp = max(0.0, float(self._param("density_weight_exponent", 1.0)))
-        density_clip = float(self._param("density_weight_clip", 5.0))
+        density_clip = float(
+            self._param("density_weight_clip", DEFAULT_PARAM_OVERRIDES["density_weight_clip"])
+        )
 
         # Distance au k-ième voisin: proxy simple de la densité locale.
         nn_model = NearestNeighbors(n_neighbors=k + 1, metric="euclidean")
@@ -279,8 +295,8 @@ class ScrawLossWeightMixin:
             fusion_mode = "additive"
         cluster_power = float(self._param("cluster_weight_power", 1.0))
         density_power = float(self._param("density_weight_power", 1.0))
-        w_min = float(self._param("min_cell_weight", 0.25))
-        w_max = float(self._param("max_cell_weight", 10.0))
+        w_min = float(self._param("min_cell_weight", DEFAULT_PARAM_OVERRIDES["min_cell_weight"]))
+        w_max = float(self._param("max_cell_weight", DEFAULT_PARAM_OVERRIDES["max_cell_weight"]))
         if w_max < w_min:
             w_max = w_min
 
@@ -295,7 +311,18 @@ class ScrawLossWeightMixin:
         else:
             # Additive mode exposes explicit trade-off alpha:
             # fused = alpha * cluster_component + (1-alpha) * density_component.
-            alpha = float(np.clip(float(self._param("cluster_density_alpha", 0.6)), 0.0, 1.0))
+            alpha = float(
+                np.clip(
+                    float(
+                        self._param(
+                            "cluster_density_alpha",
+                            DEFAULT_PARAM_OVERRIDES["cluster_density_alpha"],
+                        )
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
             cluster_component_raw = (alpha * cw).astype(np.float32, copy=False)
             density_component_raw = ((1.0 - alpha) * dw).astype(np.float32, copy=False)
             fused_raw = (cluster_component_raw + density_component_raw).astype(np.float32, copy=False)
@@ -433,7 +460,7 @@ class ScrawLossWeightMixin:
                 target=target,
                 recon_raw=recon_raw,
                 size_factors=size_factors,
-                theta=float(self._param("nb_theta", 10.0)),
+                theta=float(self._param("nb_theta", DEFAULT_PARAM_OVERRIDES["nb_theta"])),
                 mu_clip_max=float(self._param("nb_mu_clip_max", 1e6)),
                 mask=mask,
                 masked_recon_weight=masked_recon_weight,
@@ -464,7 +491,9 @@ class ScrawLossWeightMixin:
             return torch.tensor(0.0, device=z.device)
 
         margin = float(self._param("rare_triplet_margin", 0.4))
-        min_w = float(self._param("rare_triplet_min_weight", 1.2))
+        min_w = float(
+            self._param("rare_triplet_min_weight", DEFAULT_PARAM_OVERRIDES["rare_triplet_min_weight"])
+        )
         max_anchors = int(self._param("max_triplet_anchors_per_batch", 64) or 64)
 
         labels = torch.as_tensor(

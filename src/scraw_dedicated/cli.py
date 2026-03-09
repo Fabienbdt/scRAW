@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from .defaults import DEFAULT_PRESET_NAME
 from .metrics import align_labels, compute_metrics, marker_overlap_annotation
 from .presets import PRESETS, get_preset
 from .preprocessing import preprocess_adata
@@ -1195,7 +1196,12 @@ def run_once(args: argparse.Namespace) -> int:
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI parser for standalone scRAW execution."""
     p = argparse.ArgumentParser(description="Standalone strict scRAW runner")
-    p.add_argument("--preset", required=True, choices=sorted(PRESETS.keys()))
+    p.add_argument(
+        "--preset",
+        default=DEFAULT_PRESET_NAME,
+        choices=sorted(PRESETS.keys()),
+        help=f"Preset name (default: {DEFAULT_PRESET_NAME})",
+    )
     p.add_argument("--data", required=True, help="Input .h5ad file")
     p.add_argument("--output", required=True, help="Output directory")
     p.add_argument("--seed", type=int, default=42)

@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from .defaults import DEFAULT_PRESET_NAME
 from .hyperparam_search import (
     DANN_BASE_OVERRIDES,
     _as_cli_value,
@@ -305,7 +306,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ranked_rows = _read_ranked_rows(search_root)
     ref_row = _pick_reference_row(ranked_rows)
 
-    preset = str(args.preset or manifest_src.get("preset", "baron_best"))
+    preset = str(args.preset or manifest_src.get("preset", DEFAULT_PRESET_NAME))
     data_path = Path(args.data or manifest_src.get("data", "")).expanduser().resolve()
     if not data_path.exists():
         raise FileNotFoundError(f"Data file not found: {data_path}")

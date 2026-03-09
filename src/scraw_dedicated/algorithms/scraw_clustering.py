@@ -15,6 +15,8 @@ import logging
 
 import numpy as np
 
+from ..defaults import DEFAULT_PARAM_OVERRIDES
+
 
 logger = logging.getLogger(__name__)
 
@@ -516,8 +518,26 @@ class ScrawClusteringMixin:
         - optionally reassign noise points,
         - remap labels to contiguous ids.
         """
-        min_cluster_size = max(2, int(self._param("hdbscan_min_cluster_size", 4) or 4))
-        min_samples = max(1, int(self._param("hdbscan_min_samples", 2) or 2))
+        min_cluster_size = max(
+            2,
+            int(
+                self._param(
+                    "hdbscan_min_cluster_size",
+                    DEFAULT_PARAM_OVERRIDES["hdbscan_min_cluster_size"],
+                )
+                or 2
+            ),
+        )
+        min_samples = max(
+            1,
+            int(
+                self._param(
+                    "hdbscan_min_samples",
+                    DEFAULT_PARAM_OVERRIDES["hdbscan_min_samples"],
+                )
+                or 1
+            ),
+        )
         if min_samples > min_cluster_size:
             logger.warning(
                 "HDBSCAN: min_samples (%d) > min_cluster_size (%d). Clamping to %d.",

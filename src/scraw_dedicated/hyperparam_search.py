@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .presets import get_preset
+from .presets import PRESETS, get_preset
 
 
 @dataclass(frozen=True)
@@ -209,7 +209,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Comprehensive scRAW hyperparameter search (metrics-only search + optional figure-rich ablation)."
     )
-    p.add_argument("--preset", required=True, choices=["baron_best", "pancreas_best"])
+    p.add_argument("--preset", required=True, choices=sorted(PRESETS.keys()))
     p.add_argument("--data", required=True, help="Input .h5ad path")
     p.add_argument("--output-root", required=True, help="Root output directory for this search")
     p.add_argument("--device", default="cpu", help="cpu|cuda|mps|auto")
