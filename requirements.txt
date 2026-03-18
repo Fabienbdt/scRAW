@@ -1,0 +1,27 @@
+# Stable, cross-OS pinned stack for scRAW reproducibility.
+# Recommended Python: 3.11.x (works with 3.10-3.12).
+#
+# Torch note:
+# - This pin is CPU-compatible on all OS.
+# - For NVIDIA CUDA runs, install matching CUDA wheel after this file, e.g.:
+#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+
+numpy==1.26.4
+scipy==1.14.1
+pandas==2.2.3
+scikit-learn==1.5.2
+matplotlib==3.9.2
+
+anndata==0.10.9
+scanpy==1.10.3
+h5py==3.12.1
+
+umap-learn==0.5.7
+pynndescent==0.5.13
+numba==0.60.0
+
+hdbscan==0.8.40
+igraph==0.11.8
+leidenalg==0.10.2
+
+torch==2.5.1

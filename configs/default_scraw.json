@@ -1,0 +1,68 @@
+{
+  "data": {
+    "data_path": "data/baron_human_pancreas.h5ad",
+    "output_dir": "results/default_run",
+    "label_key": null
+  },
+  "runtime": {
+    "seed": 42,
+    "device": "auto"
+  },
+  "preprocessing": {
+    "min_genes_per_cell": 100,
+    "max_genes_per_cell": 10000,
+    "min_cells_per_gene": 3,
+    "target_sum": 20000.0,
+    "n_top_genes": 2000,
+    "hvg_flavor": "seurat",
+    "scale_max_value": 10.0
+  },
+  "model": {
+    "hidden_layers": [512, 256, 128],
+    "latent_dim": 192,
+    "dropout": 0.3
+  },
+  "training": {
+    "epochs": 210,
+    "warmup_epochs": 74,
+    "batch_size": 192,
+    "learning_rate": 0.00233670337683859,
+    "masking_rate": 0.15,
+    "masking_value": 0.0,
+    "masked_recon_weight": 0.8,
+    "masking_in_weighted_phase": true,
+    "gradient_clip": 5.0
+  },
+  "weighting": {
+    "weight_exponent": 0.7,
+    "cluster_density_alpha": 0.3,
+    "density_knn_k": 15,
+    "density_weight_exponent": 1.0,
+    "density_weight_clip": 8.0,
+    "dynamic_weight_momentum": 0.85,
+    "dynamic_weight_update_interval": 10,
+    "min_cell_weight": 0.45,
+    "max_cell_weight": 8.0
+  },
+  "triplet": {
+    "enabled": true,
+    "weight": 0.2346243650039478,
+    "start_epoch": 84,
+    "margin": 0.4,
+    "min_anchor_weight": 1.8,
+    "max_anchors_per_batch": 64
+  },
+  "clustering": {
+    "pseudo_label_method": "leiden",
+    "pseudo_k": 0,
+    "pseudo_k_min": 8,
+    "pseudo_k_max": 30,
+    "hdbscan_min_cluster_size": 8,
+    "hdbscan_min_samples": 8,
+    "hdbscan_reassign_noise": true
+  },
+  "outputs": {
+    "save_figures": true,
+    "save_model": true
+  }
+}

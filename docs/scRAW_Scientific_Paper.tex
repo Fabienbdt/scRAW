@@ -1,0 +1,755 @@
+% =============================================================================
+% Document can be compiled with: pdflatex scRAW_Scientific_Paper.tex
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% --- Packages ----------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{mathptmx}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+\usepackage{hyperref}
+\usepackage[table]{xcolor}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{arydshln}
+\usepackage{rotating}
+
+
+% --- Hyperref setup ----------------------------------------------------------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=black,
+  citecolor=black,
+}
+
+% --- Formatting --------------------------------------------------------------
+%\titleformat{\section}{\large\bfseries}{}{0em}{}
+%\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+
+% --- Figure paths ------------------------------------------------------------
+\def\scrawumapfigure{figures/umap_panel/umap_comparison_scraw.png}
+\def\pcaLeidenumapfigure{figures/umap_panel/umap_comparison_pca_leiden.png}
+\def\pcaKmeansumapfigure{figures/umap_panel/umap_comparison_pca_kmeans.png}
+\def\scMaeumapfigure{figures/umap_panel/umap_comparison_sc_mae.png}
+\def\scDeepClusterumapfigure{figures/umap_panel/umap_comparison_scdeepcluster.png}
+\def\scNameumapfigure{figures/umap_panel/umap_comparison_scname.png}
+
+% --- Front matter ------------------------------------------------------------
+\newcommand{\papertitle}{scRAW: Representation learning for rare cell population identification}
+% \newcommand{\papersubtitle}{Representation learning for rare cell population identification}
+\newcommand{\paperauthors}{Fabien BIDET$^{1*}$, Victoria BOURGEAIS$^{1}$, Loann GIOVANNANGELI$^{1}$ and Patricia THÉBAULT$^{1}$}
+\newcommand{\paperaffiliationone}{$^{1}$ LaBRI, Université de Bordeaux, Bordeaux, France}
+\newcommand{\papercorresponding}{$^{*}$\textbf{Corresponding author:} \href{mailto:fabien.bidet@u-bordeaux.fr}{fabien.bidet@u-bordeaux.fr}}
+
+\newcommand{\paperkeywords}{scRNA-seq, unsupervised clustering, rare cell populations, representation learning, batch correction, imbalanced labels}
+\newcommand{\paperabstract}{Single-cell RNA sequencing (scRNA-seq) data is essential for
+describing tissue heterogeneity, but rare cell populations remain difficult to identify. This challenge affects
+learning-based clustering methods because single-cell data are
+high-dimensional, sparse, noisy, imbalanced, and often affected by
+batch structure. In deep learning models, optimization is largely driven by
+abundant cell types, such that rare cells often contribute too
+weakly to organize the latent space. To address this, we present scRAW, a
+rare-population autoencoder framework for scRNA-seq clustering. scRAW
+combines standard preprocessing with a two-phase deep learning-based
+training strategy. In the first phase, all cells contribute equally to the
+reconstruction objective. In the second phase, cell-specific weights
+are computed from latent pseudo-cluster size and local density such
+that small cell groups contribute more strongly to training. A
+triplet-based regularization then increases the saliency of
+high-weight cells in the latent space, while adversarial batch correction
+can be added when batch labels are available. The learned
+representation is finally clustered with a state-of-the-art algorithm. We evaluated our approach on a human pancreas benchmark, where scRAW reached mean ARI
+$=0.9005 \pm 0.0314$ and mean ACC $=0.9087 \pm 0.0215$ across 15
+independent evaluations. scRAW also ranks first on several label-agreement, rare-population, internal-structure, and batch-effect metrics. These results support custom rare-cell reweighting as an effective framework-level strategy that improves rare-cell identification without degrading overall clustering quality.}
+\begin{document}
+
+\pagestyle{plain}
+
+\begin{flushleft}
+{\Large\bfseries \papertitle\par}
+\vspace{0.7em}
+\paperauthors\par
+\vspace{0.4em}
+\paperaffiliationone\par
+\vspace{0.6em}
+\papercorresponding\par
+\vspace{0.8em}
+\textbf{Keywords} \paperkeywords\par
+\vspace{0.4em}
+\textbf{Abstract} \paperabstract
+\end{flushleft}
+
+% =============================================================================
+\section{Introduction}
+% =============================================================================
+scRNA-seq is used to study tissue heterogeneity, and clustering is a common way to identify cell populations in these data. Clustering scRNA-seq data is challenging because the gene expression matrix is high-dimensional, sparse, noisy, and often affected by batch effects \cite{tran2020}. Performance also depends on preprocessing, representation learning, and partitioning choices, leading to variability across datasets and methods \cite{kiselev2019,luecken2019,duo2018,freytag2018}. Many scRNA-seq clustering approaches still rely on conventional dimensionality-reduction and clustering pipelines. In particular, PCA representations are often combined with widely used clustering algorithms such as KMeans \cite{macqueen1967}, and PCA-based strategies have also been explored in methods such as pcaReduce \cite{zurauskiene2016}. Deep learning methods \cite{ren2022} follow the same general goal, but try to learn a latent space in which clustering becomes easier. In other words, the representation is optimized such that cells with similar profiles are brought closer together, while different populations are better separated before the final clustering step. These methods can then rely on different clustering strategies in the learned space, including KMeans-based objectives, graph-based clustering, or neighborhood-based contrastive clustering. Examples include scDeepCluster \cite{tian2019}, scMAE \cite{fang2024}, and scNAME \cite{wan2022}. This framing is consistent with the deep clustering literature, in which deep neural networks are used to learn clustering-friendly representations from complex data \cite{ren2022}.
+
+However, in standard unsupervised training, the objective function is dominated by common cell types. As a result, neural networks tend to reach a local optimum optimized for predominant samples, leaving rare populations with a small influence on the learned representation. Consequently, rare cells are often absorbed into larger clusters and become difficult to identify, despite their biological significance \cite{grun2015}. While non-deep learning methods such as GiniClust \cite{jiang2016} and CellSIUS \cite{wegmann2019} were developed to improve rare-cell detection in single-cell data, they mainly operate as rare-population detection or post-clustering refinement tools. GiniClust is limited in preserving the global cluster structure, whereas CellSIUS depends on the quality of an initial fixed clustering.
+
+To address this, we propose scRAW (single-cell Rare Autoencoder Weighting), a framework designed to reduce class imbalance in scRNA-seq by emphasizing rare populations during representation learning itself. Built around an autoencoder backbone, scRAW integrates adaptive cell weighting, local latent regularization, and optional batch correction. The framework is not restricted to a single reconstruction loss or clustering backend; rather, its goal is to make underrepresented cells more salient while preserving the global structure of the data.
+
+
+
+% =============================================================================
+
+\section{Materials and methods}
+\subsection{scRAW Framework}
+% =============================================================================
+\subsubsection*{Overview}
+
+The scRAW framework has four steps: preprocessing of the gene expression matrix, learning a latent space with an autoencoder (AE), periodic updates of cell weights, and final clustering in the latent space. The model is a deep autoencoder with symmetric encoder and decoder. An adversarial batch head is connected to the latent space and trained with the DANN criterion \cite{ganin2016} to limit technical batch information.
+
+
+\subsubsection*{Preprocessing}
+
+Before training, the gene expression matrix is processed with a standard
+Scanpy-based pipeline \cite{wolf2018,luecken2019}. For the experiments reported here, cells with
+fewer than 200 detected genes are removed, and genes detected in fewer
+than 3 cells are discarded. Counts were normalized per cell to a fixed total of 20,000 in order to place all cells on a common scale before log transformation
+with $\log(1+x)$. We then retain the top 2,000 highly variable genes
+using the Seurat flavor \cite{satija2015}. Finally, each gene is standardized across
+cells with a gene-wise z-score and clipped to the range $[-10, 10]$ for
+numerical stability \cite{luecken2019}. No separate batch correction is applied at the
+preprocessing stage; when used, batch handling is introduced later by
+the adversarial branch. The resulting dense standardized matrix is used
+as the input to the autoencoder and, in this study, as the
+reconstruction target.
+
+\subsubsection*{Reconstruction and Training Procedure}
+
+Let $X \in \mathbb{R}^{N \times G}$ denote the
+input gene-expression matrix used by the autoencoder, where $X_{c,g}$
+is the preprocessed expression value of gene $g$ in cell $c$, with $N$
+cells and $G$ genes. Let $\hat{X} \in \mathbb{R}^{N \times G}$ denote
+the reconstructed matrix, and
+$\mathcal{L}_{\mathrm{recon},i}$ denotes the reconstruction
+error on cell $i$. The reconstruction loss is the mean squared error (MSE), defined for cell $i$ as
+$\mathcal{L}_{\mathrm{recon},i} = \lVert \hat{X}_i - X_i \rVert^2$.
+A fraction of genes is randomly masked from the input, following the general idea of masked autoencoder approaches for single-cell data \cite{fang2024,richter2025}. Training is organized in two phases. In phase 1, the latent space is stabilized with uniform reconstruction weights. In phase 2, dynamic weighting, triplet loss, and, when multiple batches are present, adversarial correction are activated. When masking is applied, masked entries can receive a larger coefficient inside this reconstruction term. We define the dynamic weighted reconstruction loss as follows:
+\begin{equation}
+  \mathcal{L}_{\mathrm{recon,weighted}}
+  =
+  \frac{1}{N}\sum_{i=1}^{N} \omega_i\,\mathcal{L}_{\mathrm{recon},i}
+\end{equation}
+where $\omega_i$ is the final reconstruction weight assigned to cell
+$i$ (see \autoref{eq:omega_weight}).
+The total optimized loss is:
+\begin{equation}
+  \mathcal{L}_{\mathrm{total}}
+  =
+  \mathcal{L}_{\mathrm{recon,weighted}}
+  +
+  \rho(e)\,\lambda_{\mathrm{triplet}}\,\mathcal{L}_{\mathrm{triplet}}
+  +
+  \lambda_{\mathrm{batch}}\,\mathcal{L}_{\mathrm{batch}}
+\end{equation}
+where $\mathcal{L}_{\mathrm{triplet}}$ is the local constraint in the
+latent space \cite{schroff2015,yang2016}, $\rho(e)$ is the triplet ramp-up term, and
+$\mathcal{L}_{\mathrm{batch}}$ is activated using the DANN criterion
+\cite{ganin2016} for adversarial batch correction.
+The weights assigned to the triplet and adversarial batch terms can be
+adapted depending on the user and dataset. 
+
+
+
+\subsubsection*{Rare-Cell MSE Weighting and Triplet Loss}
+
+In phase 1, all cells contribute equally, i.e. $\omega_i = 1$. In the
+benchmark setting reported here, phase 1 lasts $74$ epochs before
+phase 2 begins. In phase 2, each cell receives a dynamic weight $\omega_i$ that determines
+how much it contributes to the reconstruction loss. A large $\omega_i$
+gives a cell more influence during training, whereas a small
+$\omega_i$ reduces its effect. In the additive weighting scheme used here,
+$\omega_i$ combines a cluster-size term and a local-density term.
+In the benchmark setting reported here, pseudo-labels and cell weights
+are updated every 10 epochs. At each update, Leiden is rerun on the
+current latent space. In this study, the Leiden resolution is also
+reselected at each update by a grid search that targets 14 clusters and
+maximizes ARI against the reference labels.
+
+The cluster-size term is computed from Leiden pseudo-clusters in the
+current latent space,
+\begin{equation}
+  \omega^{\mathrm{cluster}}_i
+  =
+  \left( \frac{1}{\lvert C_{\ell_i} \rvert} \right)^{\gamma_{\mathrm{cluster}}}
+\end{equation}
+where $C_{\ell_i}$ is the pseudo-cluster assigned to cell $i$,
+$\lvert C_{\ell_i} \rvert$ is the number of cells in that
+pseudo-cluster, and $\gamma_{\mathrm{cluster}}$ controls how strongly
+small pseudo-clusters are upweighted. In simple terms, cells from
+smaller pseudo-clusters receive larger $\omega^{\mathrm{cluster}}_i$
+values.
+
+The local-density term is estimated from latent
+$k$-nearest-neighbor distances. Let $\mathcal{N}_k(i)$ denote the set
+of the $k$ nearest neighbors of cell $i$ in the latent space, and let
+$D_i = \{d(i,j) \mid j \in \mathcal{N}_k(i)\}$ be the corresponding set
+of Euclidean distances, with $k=15$ in the benchmark experiments reported
+here. We
+summarize this neighborhood by $\max D_i$, which here is the distance
+to the $k$-th nearest neighbor. A larger $\max D_i$ means that the cell
+is more isolated, while a smaller $\max D_i$ means that it lies in a
+denser region. The density-based weight is then
+\begin{equation}
+  \omega^{\mathrm{dens}}_i
+  =
+  \left(
+    \frac{\max D_i}{\mathrm{median}_{m=1,\ldots,N}\, \max D_m}
+  \right)^{\gamma_{\mathrm{dens}}}
+\end{equation}
+where $\gamma_{\mathrm{dens}}$ is the density exponent, and
+$\mathrm{median}_{m=1,\ldots,N}\, \max D_m$ is the median distance to
+the $k$-th nearest neighbor computed across all cells. In other words,
+the distance to the $k$-th nearest neighbor of cell $i$ is normalized
+by the median of the same quantity across the whole dataset. As a
+result, cells located in sparse latent
+regions receive larger $\omega^{\mathrm{dens}}_i$ values, while cells
+embedded in denser neighborhoods receive smaller ones.
+
+The final reconstruction weight is obtained by combining both terms,
+\begin{equation}
+    \label{eq:omega_weight}
+  \omega_i
+  =
+  \alpha\,\omega^{\mathrm{cluster}}_i
+  +
+  (1-\alpha)\,\omega^{\mathrm{dens}}_i
+\end{equation}
+where $\alpha \in [0,1]$ controls the trade-off between pseudo-cluster
+size and local isolation. In the benchmark experiments reported here, $\alpha=0.3$.
+The resulting weights are
+rescaled for numerical stability before being used in the loss. Accordingly, $\omega_i$ is large when a cell belongs to a small
+pseudo-cluster, lies
+in a sparse neighborhood, or both.
+
+In practice, the reconstruction loss is the main global training signal. Cells
+with larger $\omega_i$ have more influence on the reconstruction term,
+such that the encoder and decoder devote more capacity to rare cell expression
+profiles. Common cells still contribute, but with a smaller effect on
+the training.
+
+Triplet loss adds a second signal in the latent space and has been used
+both in deep metric learning and in clustering-oriented representation
+learning \cite{schroff2015,yang2016}. High-weight
+cells are used as anchors, then paired with a positive cell from the
+same pseudo-group and a negative cell from another group. This term
+does not improve reconstruction directly. Instead, it makes rare groups
+more salient locally and separates them better from nearby larger
+groups in the latent space.
+
+The two terms are therefore complementary: weighted MSE helps preserve
+the expression pattern of rare cells, while triplet loss improves their
+saliency in the latent space.
+
+At the end of training, clustering is performed directly in the latent space with HDBSCAN \cite{mcinnes2017}.
+
+% =============================================================================
+\subsection{Experimental Setting}
+% =============================================================================
+
+
+
+\subsubsection*{Dataset}
+
+We evaluate scRAW on the Human Baron Pancreas dataset \cite{baron2016}, a widely used single-cell RNA-seq benchmark for pancreatic cell-type identification. In the benchmark file used here, Baron contains $8569$ cells annotated into $14$ cell types and organized into $4$ batches: \textit{human1} ($1937$ cells), \textit{human2} ($1724$), \textit{human3} ($3605$), and \textit{human4} ($1303$). For the experiments reported here, preprocessing retains the top $2000$ highly variable genes as model input. The dataset spans both abundant and rare populations (see \autoref{tab:rare_population_compare}), which makes it suitable for evaluating overall clustering quality as well as rare-cell identification. In this work, Baron is treated as a batch-aware benchmark; therefore, the evaluation considers both biological label agreement and the ability to reduce residual batch effects in the learned embedding. 
+
+\subsubsection*{Compared Methods}
+
+For benchmarking, we compare scRAW with two conventional baselines and
+three published deep learning baselines. The conventional baselines are
+PCA+Leiden, using Leiden community detection \cite{traag2019} after PCA
+projection, and PCA+KMeans, using the widely used KMeans algorithm
+\cite{macqueen1967} after PCA projection. For both baselines, the number
+of PCA components was selected automatically with Cattell's scree test.
+For PCA+Leiden, the Leiden resolution was selected automatically through
+a silhouette-based search on a predefined
+grid. The number of predicted clusters was therefore induced by this
+resolution and was not fixed in advance. For PCA+KMeans, the number of
+clusters was set to the number of reference labels in Baron
+($K = 14$). The same choice was also used for the compared KMeans-based
+deep baselines when their implementations required $K$ to be specified
+in advance.
+The deep learning baselines
+are scDeepCluster \cite{tian2019}, scMAE \cite{fang2024}, and scNAME
+\cite{wan2022}. 
+%These methods were evaluated with their standard or default settings,
+%whereas the reported scRAW results correspond to the Optuna-selected
+%hyperparameter setting described below.
+For these methods, we use the default or recommended hyperparameter settings provided in their original implementations or publications. These settings were also used when evaluating the methods on the Baron dataset in their original studies. For scRAW, results correspond to the Optuna-selected hyperparameter setting described below.
+
+\subsubsection*{Evaluation Metrics}
+
+We evaluated performance with four metric groups: label-agreement, rare-population, internal-structure, and
+batch-effect. Label-agreement metrics were computed by
+comparing predicted clusters with reference cell-type labels after
+excluding cells marked as noise. ARI \cite{hubert1985} and NMI
+\cite{vinh2010} measure the agreement between the predicted partition
+and the reference partition without relying on cluster names. ACC and
+the mean unweighted F1 score \cite{sokolova2009}, as well as balanced accuracy
+\cite{brodersen2010}, were computed after Hungarian matching between
+predicted clusters and reference labels, such that each cluster was
+associated with the most consistent label.
+
+Because rare populations are a main target of scRAW, we also report
+rare-population metrics. RareACC is the accuracy restricted to classes
+representing less than $5\%$ of the evaluated cells. On Baron, this
+$5\%$ threshold corresponds to fewer than $429$ evaluated cells per
+class. We additionally report UltraRareACC, defined as the accuracy
+restricted to cell types with at most $30$ evaluated cells per class.
+On Baron, this threshold corresponds to approximately $0.35\%$ of the
+$8569$ evaluated cells. The ultra-rare classes are
+\textit{t\_cell} ($7$ cells), \textit{schwann} ($13$),
+\textit{epsilon} ($18$), and \textit{mast} ($25$); together, these
+four classes account for $63$ evaluated cells in total. As an internal-structure
+metric, we also report the silhouette score to summarize how coherent
+the predicted clusters are and how well they are separated in the
+embedding space.
+
+These metrics capture complementary aspects of performance. ARI and NMI mainly summarize the global quality of the partition and are invariant to the arbitrary numbering of clusters. ACC is easier to interpret as a fraction of correctly assigned cells after label matching, but it is still influenced by the largest populations. The mean unweighted F1 score and balanced accuracy reduce this dominance by giving each class a more even role in the final score. Here, the mean unweighted F1 score is the arithmetic mean of the class-wise F1 scores after Hungarian matching, without weighting classes by their support. In practice, this metric is sensitive to both low precision and low recall on a given class, while balanced accuracy is the mean class-wise recall after matching.
+
+RareACC and UltraRareACC should be interpreted as subset accuracies
+rather than macro-averages over rare classes. They count all cells
+belonging to the selected rare groups and compute the fraction of
+correctly assigned cells inside that subset. As a result, larger rare
+groups contribute more than very small ones, and UltraRareACC was added
+to isolate the hardest cell types in Baron. For this reason, we also
+report per-cell-type recall in the rare-population analysis table,
+which makes it possible to see which specific rare or ultra-rare
+populations are identified or missed. The silhouette score provides a
+different perspective as an internal-structure metric: it depends only
+on the predicted clustering and the structure of the latent space, and indicates whether
+predicted clusters form coherent, well-separated groups, but it does not by itself
+guarantee agreement with biological labels.
+
+For batch-effect evaluation, we report the final aggregated scIB-E score following the benchmarking framework proposed by Yi et al. \cite{yi2025}. This score is designed to measure batch-effect correction by combining batch-mixing and biological-conservation criteria into a single summary: higher values indicate that technical batch structure is better reduced while biologically meaningful variation is preserved.
+
+
+\subsubsection*{Hyperparameter Search}
+In the experiments reported
+here, we set $\lambda_{\mathrm{triplet}} = 0.2346$ and
+$\lambda_{\mathrm{batch}} = 0.0562$.
+The hyperparameters used in this work were selected with Optuna
+\cite{akiba2019}.
+We used a two-stage procedure consisting of a broad Optuna TPE search followed by repeated reruns of the top-ranked hyperparameter settings. In stage 1, Optuna explored 450 hyperparameter settings on the Baron human pancreas dataset, with one full run per trial, TPE sampling, and 32 startup trials before adaptive model-based proposals; DANN was enabled throughout and the target number of clusters was fixed to 14. In stage 2, we kept the top 10 settings from stage 1 and reran each of them with three independent seeds, yielding 30 additional full runs and 480 training/evaluation runs overall. This second pass was used to reduce seed-specific variance: candidates were re-ranked by the mean of the same weighted clustering score across the three reruns, and the final selected setting was the one with the best refined average score. The selection score combined ARI, NMI, the mean unweighted F1 score, balanced accuracy, and rare-class accuracy.
+
+
+% =============================================================================
+\section{Results and Discussion}
+% =============================================================================
+
+\subsection{Overall Performance}
+
+As shown in \autoref{tab:benchmark_compare}, scRAW provides the strongest overall performance on the global label-agreement metrics, on UltraRareACC, and on the aggregated scIB-E score. Among the baselines, PCA+Leiden is the strongest on ARI, NMI, and ACC, PCA+KMeans gives the highest UltraRareACC, scMAE gives the strongest mean unweighted F1 score and BalancedACC, scDeepCluster gives the best RareACC, and scNAME gives the highest Silhouette.
+
+Among the baseline methods, PCA+Leiden is the best performer on
+the global agreement metrics. This suggests
+that identifying the large dominant populations already gives a
+strong advantage on ARI, NMI, and ACC. Because these metrics are influenced by the largest classes, strong performance on the dominant populations can partly mask weaker identification of rare cell types. PCA+KMeans does not match
+PCA+Leiden on these global metrics, but it performs better on
+UltraRareACC, which shows that a simple PCA-based pipeline can still
+identify part of the smallest cell groups. Across seed reruns, PCA+Leiden is also markedly less stable than PCA+KMeans, which is consistent with the stronger sensitivity of graph-based clustering to seed-dependent changes in the neighborhood graph and Leiden partition. Among the deep learning baselines, scMAE performs best on the class-balanced global metrics,
+scDeepCluster achieves the strongest RareACC, and scNAME provides the most
+regular latent-space structure. There is therefore
+no single baseline that dominates across all metrics.
+
+Concerning the batch effect correction, scRAW gives the strongest scIB-E result overall, followed by scNAME. PCA+Leiden and PCA+KMeans are then nearly tied, slightly ahead of scMAE, whereas scDeepCluster is clearly lower. This indicates that the learned scRAW representation provides the best overall trade-off between batch correction and biological conservation among the methods considered here.
+
+\vspace{\baselineskip}
+\refstepcounter{table}
+\noindent\textbf{Table \thetable.}
+Comparison between scRAW and other algorithms on the Baron 2000-HVG benchmark. All rows report mean $\pm$ standard deviation across 15 seed reruns. For PCA+Leiden and PCA+KMeans, this dispersion mainly reflects seed-dependent variation in the final clustering stage, that is, graph construction and Leiden partitioning for PCA+Leiden, and centroid initialization for PCA+KMeans, rather than a change in the PCA preprocessing itself. Best values are shown in bold and second-best values are underlined. For scRAW, the reported results correspond to the Optuna-selected hyperparameter setting used in this study, whereas the comparison methods were evaluated with their standard or default settings and were not re-tuned specifically on Baron. UltraRareACC was recomputed from class-wise recalls as the subset accuracy over cell types with at most 30 evaluated cells.
+\label{tab:benchmark_compare}
+
+\begin{center}
+{\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{lccccc}
+\hline
+\multicolumn{6}{c}{Global label-agreement metrics} \\
+\hline
+Method & ARI & NMI & ACC & Mean F1 & BalancedACC \\
+\hline
+scRAW & \textbf{0.9005 $\pm$ 0.0314} & \textbf{0.8788 $\pm$ 0.0162} & \textbf{0.9087 $\pm$ 0.0215} & \textbf{0.7115 $\pm$ 0.0625} & \textbf{0.7727 $\pm$ 0.0715} \\
+PCA+Leiden & \underline{0.8448 $\pm$ 0.0743} & \underline{0.8443 $\pm$ 0.0351} & \underline{0.8627 $\pm$ 0.0468} & 0.4310 $\pm$ 0.0758 & 0.4864 $\pm$ 0.0700 \\
+PCA+KMeans & 0.7870 $\pm$ 0.0062 & 0.8036 $\pm$ 0.0032 & 0.8032 $\pm$ 0.0051 & 0.5817 $\pm$ 0.0076 & 0.6008 $\pm$ 0.0216 \\
+scMAE & 0.7782 $\pm$ 0.0579 & 0.8202 $\pm$ 0.0163 & 0.7487 $\pm$ 0.0474 & \underline{0.6262 $\pm$ 0.0077} & \underline{0.6278 $\pm$ 0.0271} \\
+scDeepCluster & 0.7425 $\pm$ 0.0817 & 0.8189 $\pm$ 0.0357 & 0.7521 $\pm$ 0.0563 & 0.5890 $\pm$ 0.0429 & 0.6156 $\pm$ 0.0362 \\
+scNAME & 0.7441 $\pm$ 0.0505 & 0.8379 $\pm$ 0.0171 & 0.7452 $\pm$ 0.0326 & 0.6112 $\pm$ 0.0258 & 0.6236 $\pm$ 0.0305 \\
+\hline
+\end{tabular}
+
+\vspace{1em}
+
+\begin{tabular}{lcccc}
+\hline
+\multicolumn{5}{c}{Rare-population, internal-structure, and batch-effect metrics} \\
+\hline
+Method & RareACC & UltraRareACC & Silhouette & scIB-E \\
+\hline
+scRAW & 0.7840 $\pm$ 0.1245 & \textbf{0.6138 $\pm$ 0.1479} & \underline{0.7157 $\pm$ 0.0602} & \textbf{0.5364 $\pm$ 0.0238} \\
+PCA+Leiden & 0.4341 $\pm$ 0.1179 & 0.0000 $\pm$ 0.0000 & 0.4472 $\pm$ 0.0155 & 0.4405 $\pm$ 0.0002 \\
+PCA+KMeans & 0.5106 $\pm$ 0.0342 & \underline{0.4540 $\pm$ 0.0552} & 0.4489 $\pm$ 0.0012 & 0.4405 $\pm$ 0.0002 \\
+scMAE & 0.6539 $\pm$ 0.0480 & 0.4476 $\pm$ 0.0776 & 0.3721 $\pm$ 0.0105 & 0.4398 $\pm$ 0.0074 \\
+scDeepCluster & \textbf{0.8654 $\pm$ 0.0447} & 0.0593 $\pm$ 0.0786 & 0.1409 $\pm$ 0.0419 & 0.3762 $\pm$ 0.0067 \\
+scNAME & \underline{0.8435 $\pm$ 0.0714} & 0.0688 $\pm$ 0.0729 & \textbf{0.9623 $\pm$ 0.0057} & \underline{0.4419 $\pm$ 0.0123} \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+\subsection{Rare Population Detection}
+
+Table~\ref{tab:rare_population_compare} reports the per-cell-type accuracy, defined here as class-wise recall, for the best-performing evaluation of each algorithm. The representative evaluation for each method was selected by BalancedACC across the 15 seed reruns. Among the baselines, identification is more partial and fragmented: PCA+KMeans and scMAE identify \textit{mast} cells well, scMAE and scNAME identify the \textit{t\_cell} group in their selected runs, PCA+KMeans also identifies a large part of the \textit{schwann} population, and scDeepCluster fully identifies \textit{gamma} while still capturing only part of \textit{schwann}. None of these baselines matches the overall coverage of scRAW across the smallest groups. On the broader set of rare populations, the pattern is more heterogeneous, with different baselines performing better on different cell types. In the best-performing scRAW evaluation, the only remaining extra cluster is limited in size and appears to correspond to a local split of the ductal compartment rather than to an additional distinct population. It contains $171$ cells, mostly ductal ($156$ cells), with a small number of acinar ($13$) and beta ($2$) cells. Under Hungarian matching, predicted clusters are assigned to reference labels in a one-to-one manner. This small mixed cluster remains unmatched because the ductal label is already assigned to a larger predicted cluster, and the remaining cells do not match another reference label clearly enough. This reflects a limitation of the Hungarian algorithm, which favors a single best one-to-one correspondence even when a biological population is split into two predicted clusters. This suggests a local over-segmentation of one region rather than a systematic failure across cell types.
+
+Figure~\ref{fig:umaps} shows the clustering results for all compared methods. In scRAW, the predicted clusters match the ground-truth labels well, and the misclassification panel shows that errors are few and mostly affect the rarest cell types. The cell rarity panel shows that high-$\omega$ cells, that is, cells from small pseudo-clusters or sparse latent regions, correspond to the small isolated groups visible in the UMAP, which are the ultra-rare populations that scRAW targets. PCA+Leiden separates the main populations correctly but does not resolve the smallest groups, consistent with its zero score on UltraRareACC in Table~\ref{tab:benchmark_compare}. PCA+KMeans identifies part of the ultra-rare classes, but still misses a substantial fraction of them, consistent with its intermediate performance on UltraRareACC. Among the deep learning baselines, scMAE produces an embedding in which part of the ultra-rare signal becomes salient, but still misses several rare groups; scDeepCluster identifies more rare cells overall but its latent space is fragmented, as reflected by its low silhouette score; scNAME produces the most regular latent-space structure but does not identify the smallest populations consistently across runs. Overall, the UMAP panels show that scRAW is the only method that both preserves the global cluster structure and identifies the ultra-rare populations emphasized by the rarity weights.
+
+
+% ==============================================================================
+
+\setlength{\tabcolsep}{0.5em} % for the horizontal separation
+\def \subfwidth {0.26} % all figures widths 0.26 en dépassant des marges, 0.21 pour ne pas dépasser des marges
+\def \lefttitleshift {0.8cm} % left shift for sideways titles to center vertically manually. /!\ Not used for all titles 
+\begin{figure*}
+    \centering
+    \advance\leftskip-2cm
+    \advance\rightskip-2cm
+    \begin{tabular}{ccccc}
+        & \textbf{Ground truth} & \textbf{Predicted clusters} & \textbf{Misclassifications} & \textbf{Cell rarity ($\omega$)} \\
+
+        \begin{sideways}\hspace{\lefttitleshift}\textbf{scRAW}\end{sideways} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scraw/ground_truth_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scraw/predicted_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scraw/classification_errors_by_rarity.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scraw/scraw_weights_reprojected.png} \\
+
+        \begin{sideways}\hspace{0.4cm}\textbf{PCA + Leiden}\end{sideways} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_leiden/ground_truth_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_leiden/predicted_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_leiden/classification_errors_by_rarity.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_leiden/scraw_weights_reprojected.png} \\
+
+        \begin{sideways}\hspace{0.0cm}\textbf{PCA + K-means}\end{sideways} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_kmeans/ground_truth_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_kmeans/predicted_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_kmeans/classification_errors_by_rarity.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/pca_kmeans/scraw_weights_reprojected.png} \\
+
+        \begin{sideways}\hspace{\lefttitleshift}\textbf{scMAE}\end{sideways} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/sc_mae/ground_truth_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/sc_mae/predicted_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/sc_mae/classification_errors_by_rarity.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/sc_mae/scraw_weights_reprojected.png} \\
+
+
+        \begin{sideways}\hspace{0.35cm}\textbf{scDeepCluster}\end{sideways} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scdeepcluster/ground_truth_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scdeepcluster/predicted_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scdeepcluster/classification_errors_by_rarity.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scdeepcluster/scraw_weights_reprojected.png} \\
+
+        \begin{sideways}\hspace{\lefttitleshift}\textbf{scNAME}\end{sideways} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scname/ground_truth_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scname/predicted_labels.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scname/classification_errors_by_rarity.png} &
+        \includegraphics[width=\subfwidth\linewidth]{figures/comparative_figures/scname/scraw_weights_reprojected.png} \\
+
+    \end{tabular}
+    \caption{
+       Representations of the latent spaces learned by all compared methods in 2D space (UMAP projection). For each method, the first two columns report ground-truth and predicted labels after Hungarian alignment. The third column highlights classification outcome at the single-cell level: correctly classified cells are shown in gray, whereas errors are colored according to the rarity of the true population. The rightmost column displays the per-cell rarity score $\omega$ (see \autoref{eq:omega_weight}); for baseline methods, these values correspond to scRAW-derived weights reprojected onto the same 2D coordinates. Cells with larger $\omega$ values are shown with higher opacity.
+
+    }
+    \label{fig:umaps}
+\end{figure*}
+
+
+% ==============================================================================
+
+\vspace{\baselineskip}
+\refstepcounter{table}
+\noindent\textbf{Table \thetable.}
+Per-cell-type performance, reported as class-wise recall, for the best-performing evaluation of each algorithm on the Baron dataset. The representative evaluation for each method is selected by BalancedACC across the 15 seed reruns. Best values are shown in bold and second-best values are underlined. Colored dashed separators mark the boundary between UltraRareACC classes (support $\leq 30$), the remaining RareACC classes (support $< 5\%$ of evaluated cells), and the more abundant populations. Bestvalues are shown in bold and second-best values are underlined.
+\label{tab:rare_population_compare}
+
+\begin{center}
+{\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lccccccc}
+\hline
+Cell type & Number of cells & scRAW & PCA+Leiden & PCA+KMeans & scMAE & scDeepCluster & scNAME \\
+\hline
+t\_cell & 7 & \textbf{1.000} & \underline{0.000} & \underline{0.000} & \textbf{1.000} & \underline{0.000} & \textbf{1.000} \\
+schwann & 13 & \textbf{1.000} & 0.000 & \underline{0.923} & 0.000 & 0.769 & 0.000 \\
+epsilon & 18 & \textbf{0.000} & \textbf{0.000} & \textbf{0.000} & \textbf{0.000} & \textbf{0.000} & \textbf{0.000} \\
+mast & 25 & \textbf{1.000} & \underline{0.000} & \textbf{1.000} & \textbf{1.000} & \underline{0.000} & \underline{0.000} \\
+\multicolumn{8}{r}{\textcolor{orange!70!black}{\scriptsize\itshape UltraRareACC boundary ($\leq 30$ cells)}} \\
+\arrayrulecolor{orange!70!black}\cdashline{1-8}\arrayrulecolor{black}
+macrophage & 55 & \underline{0.964} & \textbf{1.000} & 0.855 & \textbf{1.000} & \textbf{1.000} & 0.927 \\
+quiescent\_stellate & 173 & \textbf{0.960} & 0.000 & 0.607 & 0.925 & \underline{0.948} & 0.931 \\
+endothelial & 252 & \textbf{0.996} & \underline{0.992} & 0.909 & 0.948 & 0.905 & 0.925 \\
+gamma & 255 & \textbf{0.988} & \underline{0.000} & \underline{0.000} & \underline{0.000} & \textbf{0.988} & \textbf{0.988} \\
+activated\_stellate & 284 & \underline{0.979} & \textbf{0.996} & 0.546 & 0.968 & 0.782 & 0.919 \\
+\multicolumn{8}{r}{\textcolor{teal!60!black}{\scriptsize\itshape RareACC boundary ($< 5\%$ of evaluated cells)}} \\
+\arrayrulecolor{teal!60!black}\cdashline{1-8}\arrayrulecolor{black}
+delta & 601 & 0.952 & 0.932 & \textbf{0.982} & 0.943 & \underline{0.978} & 0.977 \\
+acinar & 958 & 0.970 & \textbf{0.991} & 0.967 & 0.972 & \textbf{0.991} & \underline{0.979} \\
+ductal & 1077 & \underline{0.758} & \textbf{0.834} & 0.473 & 0.419 & 0.428 & 0.444 \\
+alpha & 2326 & \underline{0.975} & \textbf{0.985} & 0.970 & 0.494 & 0.727 & 0.532 \\
+beta & 2525 & \underline{0.980} & \textbf{0.983} & 0.826 & 0.971 & 0.966 & 0.865 \\
+\hline
+\end{tabular}
+}
+}
+\end{center}
+
+The final density-based clustering is also stronger than a Leiden solution forced to $14$ clusters on the same embedding. The final HDBSCAN output reaches ARI $=0.9364$ and BalancedACC $=0.8943$, whereas the corresponding Leiden solution reaches ARI $=0.8570$ and BalancedACC $=0.7424$. This supports the choice of HDBSCAN as the final clustering step in scRAW.
+
+\subsection{Ablation Study}
+
+Table~\ref{tab:ablation_trial206} summarizes the ablation experiments around the selected MSE-based setup, including both weighted and plain MSE baselines. The strongest variant depends on the metric: weighted MSE + triplet gives the highest ARI and NMI, whereas the full weighted MSE + DANN + triplet variant, which corresponds to the scRAW model used in this study, gives the highest ACC, mean F1 score, BalancedACC, and RareACC. For batch correction alone, the highest scIB-E score is obtained by the single-update variant ($0.5882$), slightly ahead of weighted MSE + DANN ($0.5867$). This indicates that stronger batch mixing does not automatically translate into better clustering quality. The plain MSE-only autoencoder is by far the weakest baseline, which indicates that the observed gains are not explained by the backbone alone. The weighted MSE-only variant is already much stronger than this plain baseline, showing that phase-2 reweighting is beneficial even without DANN or triplet loss. Among the weighted variants, DANN without triplet remains clearly suboptimal on the label-agreement metrics despite its high scIB-E score. Collapsing the dynamic-weight updates to a single update, or suppressing either the cluster-size or density component of the weighting all degrade performance relative to the full model, with the density component having a particularly large effect on ARI and NMI.
+
+\vspace{\baselineskip}
+\refstepcounter{table}
+\noindent\textbf{Table \thetable.}
+Full-from-scratch ablation results on the Baron dataset for the selected MSE-based scRAW benchmark setting and its main variants, evaluated on a single seed. The row ``Weighted MSE + DANN + triplet ($\alpha=0.3$)'' corresponds to the full scRAW model used in this study. The scIB-E column comes from the dedicated scIB reruns of the same ablation variants. 
+\label{tab:ablation_trial206}
+
+\begin{center}
+{\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lccccccc}
+\hline
+Variant & ARI & NMI & ACC & Mean F1 & BalancedACC & RareACC & scIB-E \\
+\hline
+MSE & 0.1154 & 0.3398 & 0.3599 & 0.3066 & 0.3605 & 0.3521 & 0.4292 \\
+Weighted MSE ($\alpha=0.3$) & 0.8395 & 0.8077 & 0.8133 & 0.3611 & 0.6762 & 0.5823 & 0.4385 \\
+Weighted MSE + triplet ($\alpha=0.3$) & \textbf{0.9419} & \textbf{0.9115} & 0.9288 & 0.7734 & 0.8246 & 0.8004 & 0.4533 \\
+Weighted MSE + DANN ($\alpha=0.3$) & 0.1757 & 0.4271 & 0.4118 & 0.3816 & 0.3950 & 0.3937 & 0.5867 \\
+Weighted MSE + DANN + triplet ($\alpha=0.3$) & 0.9364 & 0.9065 & \textbf{0.9459} & \textbf{0.7976} & \textbf{0.8943} & \textbf{0.9658} & 0.5451 \\
+Weighted MSE + DANN + triplet ($\alpha=0.3$), single update & 0.8011 & 0.8443 & 0.8764 & 0.7315 & 0.8789 & 0.9630 & \textbf{0.5882} \\
+Weighted MSE + DANN + triplet, density-only ($\alpha=0$) & 0.8907 & 0.8649 & 0.8945 & 0.7657 & 0.8125 & 0.7357 & 0.5169 \\
+Weighted MSE + DANN + triplet, cluster-size-only ($\alpha=1$) & 0.8100 & 0.7911 & 0.8548 & 0.5617 & 0.7239 & 0.7218 & 0.5589 \\
+
+\hline
+\end{tabular}%
+}
+}
+\end{center}
+
+\section{Conclusion and Perspectives}
+
+On the Baron benchmark, scRAW gives the strongest overall results on
+the global label-agreement metrics, on UltraRareACC, and on the
+aggregated scIB-E score. These results indicate that the method can
+preserve the main cluster structure while improving the identification of the
+smallest cell populations and maintaining a favorable trade-off between
+biological conservation and batch correction. The ablation study also
+shows that the gains do not come from the autoencoder backbone alone:
+the phase-2 weighting is already important, and the combination of
+weighted reconstruction, triplet regularization, and adversarial batch
+correction gives the strongest overall variant.
+
+These findings should nevertheless be validated beyond Baron.
+The method should be tested on additional datasets to determine
+whether the same trends hold beyond Baron. For example, the OpenProblems
+pancreas dataset \cite{openproblems_pancreas} could provide a useful benchmark to assess scRAW under
+stronger batch effects. It would also be relevant to evaluate the model
+in a generalization setting by testing it on data not seen during
+training.
+\section{Availability and Implementation}
+
+The method is implemented in the scRAW codebase used for this study.
+The source code is available on GitHub at
+\url{https://github.com/Fabienbdt/scRAW}. This manuscript describes the
+benchmark setting used for the results reported here. The Baron pancreas
+dataset used in this study is publicly available from GEO under
+accession GSE84133:
+\url{https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE84133}.
+
+\section{Acknowledgements}
+
+I sincerely thank Victoria Bourgeais and Loann Giovannangeli for their
+guidance, support, and encouragement throughout the project and during
+the writing of this manuscript. I am also very grateful to Patricia
+Thébault for her supervision, and to the LaBRI laboratory for its warm
+welcome and supportive environment.
+
+\section{Funding Information}
+
+This work received no specific funding.
+
+\begingroup
+\small
+\begin{thebibliography}{24}
+
+\bibitem{tran2020}
+Hoa Thi Nhu Tran, Kok Siong Ang, Marion Chevrier, Xiaomeng Zhang, Nicole Yee Shin Lee, Michelle Goh, and Jinmiao Chen.
+\newblock A benchmark of batch-effect correction methods for single-cell RNA sequencing data.
+\newblock \textit{Genome Biology}, 21:12, 2020.
+
+\bibitem{hubert1985}
+Lawrence Hubert and Phipps Arabie.
+\newblock Comparing partitions.
+\newblock \textit{Journal of Classification}, 2(1):193--218, 1985.
+
+\bibitem{vinh2010}
+Nguyen Xuan Vinh, Julien Epps, and James Bailey.
+\newblock Information theoretic measures for clusterings comparison: Variants, properties, normalization and correction for chance.
+\newblock \textit{Journal of Machine Learning Research}, 11:2837--2854, 2010.
+
+\bibitem{sokolova2009}
+Marina Sokolova and Guy Lapalme.
+\newblock A systematic analysis of performance measures for classification tasks.
+\newblock \textit{Information Processing \& Management}, 45(4):427--437, 2009.
+
+\bibitem{brodersen2010}
+Kay H. Brodersen, Cheng Soon Ong, Klaas E. Stephan, and Joachim M. Buhmann.
+\newblock The balanced accuracy and its posterior distribution.
+\newblock In \textit{2010 20th International Conference on Pattern Recognition}, pages 3121--3124, 2010.
+
+\bibitem{ren2022}
+Yazhou Ren, Jingyu Pu, Zhimeng Yang, Jie Xu, Guofeng Li, Xiaorong Pu, Philip S. Yu, and Lifang He.
+\newblock Deep Clustering: A Comprehensive Survey.
+\newblock \textit{IEEE Transactions on Neural Networks and Learning Systems}, 36(4):5858--5878, 2025.
+\newblock doi: 10.1109/TNNLS.2024.3403155.
+
+\bibitem{schroff2015}
+Florian Schroff, Dmitry Kalenichenko, and James Philbin.
+\newblock FaceNet: A unified embedding for face recognition and clustering.
+\newblock In \textit{Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition}, pages 815--823, 2015.
+
+\bibitem{yang2016}
+Jianwei Yang, Devi Parikh, and Dhruv Batra.
+\newblock Joint unsupervised learning of deep representations and image clusters.
+\newblock In \textit{Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition}, pages 5147--5156, 2016.
+
+\bibitem{kiselev2019}
+Vladimir Y. Kiselev, Tallulah S. Andrews, and Martin Hemberg.
+\newblock Challenges in unsupervised clustering of single-cell RNA-seq data.
+\newblock \textit{Nature Reviews Genetics}, 20(5):273--282, 2019.
+
+\bibitem{luecken2019}
+Malte D. Luecken and Fabian J. Theis.
+\newblock Current best practices in single-cell RNA-seq analysis: a tutorial.
+\newblock \textit{Molecular Systems Biology}, 15(6):e8746, 2019.
+
+\bibitem{duo2018}
+Angelo Duò, Mark D. Robinson, and Charlotte Soneson.
+\newblock A systematic performance evaluation of clustering methods for single-cell RNA-seq data.
+\newblock \textit{F1000Research}, 7:1141, 2018.
+
+\bibitem{freytag2018}
+Sven Freytag, Luyi Tian, Ingrid L\"onnstedt, Milica Ng, and Melanie Bahlo.
+\newblock Comparison of clustering tools in R for medium-sized 10x Genomics single-cell RNA-sequencing data.
+\newblock \textit{F1000Research}, 7:1297, 2018.
+
+\bibitem{baron2016}
+Maayan Baron, Adrian Veres, Samuel L. Wolock, Aubrey L. Faust, Renaud Gaujoux, A. Christine Vetere, Jennifer Hyoje Ryu, Aaron L. Wagner, Kayla Shen-Orr, Robert S. Klein, Itamar Hacohen, and Douglas A. Melton.
+\newblock A single-cell transcriptomic map of the human and mouse pancreas reveals inter- and intra-cell population structure.
+\newblock \textit{Cell Systems}, 3(4):346--360.e4, 2016.
+
+\bibitem{wolf2018}
+F. Alexander Wolf, Philipp Angerer, and Fabian J. Theis.
+\newblock Scanpy: large-scale single-cell gene expression data analysis.
+\newblock \textit{Genome Biology}, 19(1):15, 2018.
+
+\bibitem{satija2015}
+Rahul Satija, Jeffrey A. Farrell, David Gennert, Alexander F. Schier, and Aviv Regev.
+\newblock Spatial reconstruction of single-cell gene expression data.
+\newblock \textit{Nature Biotechnology}, 33(5):495--502, 2015.
+
+\bibitem{traag2019}
+Vincent A. Traag, Ludo Waltman, and Nees Jan van Eck.
+\newblock From Louvain to Leiden: guaranteeing well-connected communities.
+\newblock \textit{Scientific Reports}, 9:5233, 2019.
+
+\bibitem{macqueen1967}
+J. B. MacQueen.
+\newblock Some methods for classification and analysis of multivariate observations.
+\newblock In \textit{Proceedings of the Fifth Berkeley Symposium on Mathematical Statistics and Probability}, volume 1, pages 281--297, 1967.
+
+\bibitem{zurauskiene2016}
+Justina Zurauskiene and Christopher Yau.
+\newblock pcaReduce: hierarchical clustering of single cell transcriptional profiles.
+\newblock \textit{BMC Bioinformatics}, 17:140, 2016.
+
+\bibitem{tian2019}
+Tian Tian, Ji Wan, Qi Song, and Zhi Wei.
+\newblock Clustering single-cell RNA-seq data with a model-based deep learning approach.
+\newblock \textit{Nature Machine Intelligence}, 1(4):191--198, 2019.
+
+\bibitem{ganin2016}
+Yaroslav Ganin, Evgeniya Ustinova, Hana Ajakan, Pascal Germain, Hugo Larochelle, Francois Laviolette, Mario Marchand, and Victor Lempitsky.
+\newblock Domain-adversarial training of neural networks.
+\newblock \textit{Journal of Machine Learning Research}, 17(59):1--35, 2016.
+
+
+\bibitem{grun2015}
+Dominic Grün, Anna Lyubimova, Lennart Kester, Kay Wiebrands, Onur Basak, Nobuo Sasaki, Hans Clevers, and Alexander van Oudenaarden.
+\newblock Single-cell messenger RNA sequencing reveals rare intestinal cell types.
+\newblock \textit{Nature}, 525(7568):251--255, 2015.
+
+\bibitem{jiang2016}
+Lan Jiang, Huidong Chen, Luca Pinello, and Guo-Cheng Yuan.
+\newblock GiniClust: detecting rare cell types from single-cell gene expression data with Gini index.
+\newblock \textit{Genome Biology}, 17(1):144, 2016.
+
+\bibitem{wegmann2019}
+Rebekka Wegmann, Marilisa Neri, Sven Schuierer, Bilada Bilican, Huyen Hartkopf, Florian Nigsch, Felipa Mapa, Annick Waldt, Rachel Cuttat, Max R. Salick, Joe Raymond, Ajamete Kaykas, Guglielmo Roma, and Caroline Gubser Keller.
+\newblock CellSIUS provides sensitive and specific detection of rare cell populations from complex single-cell RNA-seq data.
+\newblock \textit{Genome Biology}, 20:142, 2019.
+
+\bibitem{fang2024}
+Zhaoyu Fang, Ruiqing Zheng, and Min Li.
+\newblock scMAE: a masked autoencoder for single-cell RNA-seq clustering.
+\newblock \textit{Bioinformatics}, 40(1):btae020, 2024.
+
+\bibitem{richter2025}
+Till Richter, Mojtaba Bahrami, Yufan Xia, David S. Fischer, and Fabian J. Theis.
+\newblock Delineating the effective use of self-supervised learning in single-cell genomics.
+\newblock \textit{Nature Machine Intelligence}, 7:68--78, 2025.
+
+\bibitem{akiba2019}
+Takuya Akiba, Shotaro Sano, Toshihiko Yanase, Takeru Ohta, and Masanori Koyama.
+\newblock Optuna: A Next-generation Hyperparameter Optimization Framework.
+\newblock In \textit{Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining}, pages 2623--2631, 2019.
+
+\bibitem{mcinnes2017}
+Leland McInnes, John Healy, and Steve Astels.
+\newblock hdbscan: Hierarchical density based clustering.
+\newblock \textit{Journal of Open Source Software}, 2(11):205, 2017.
+
+\bibitem{becht2019}
+Etienne Becht, Leland McInnes, John Healy, Charles-Antoine Dutertre, Immanuel W. H. Kwok, Lai Guan Ng, Florent Ginhoux, and Evan W. Newell.
+\newblock Dimensionality reduction for visualizing single-cell data using UMAP.
+\newblock \textit{Nature Biotechnology}, 37:38--44, 2019.
+
+\bibitem{yi2025}
+Chenxin Yi, Jinyu Cheng, Jiajun Chen, Wanquan Liu, Junwei Liu, and Yixue Li.
+\newblock Benchmarking deep learning methods for biologically conserved single-cell integration.
+\newblock \textit{Genome Biology}, 26:398, 2025.
+
+\bibitem{openproblems_pancreas}
+Open Problems in Single-Cell Analysis.
+\newblock Human pancreas dataset (\textit{openproblems\_v1/pancreas}).
+\newblock \url{https://openproblems.bio/datasets/openproblems_v1/pancreas}.
+
+\bibitem{wan2022}
+Hui Wan, Liang Chen, and Minghua Deng.
+\newblock scNAME: neighborhood contrastive clustering with ancillary mask estimation for scRNA-seq data.
+\newblock \textit{Bioinformatics}, 38(6):1575--1583, 2022.
+
+
+\end{thebibliography}
+\endgroup
+
+\end{document}
+% =============================================================================
