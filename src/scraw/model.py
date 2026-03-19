@@ -135,21 +135,39 @@ def encode_in_batches(
     device: torch.device,
     batch_size: int,
 ) -> np.ndarray:
-    """Encode a full matrix with bounded memory usage."""
+    """Encode a full matrix, preferring a single pass for exact reproducibility."""
     model.to(device)
     was_training = bool(model.training)
     model.eval()
 
-    parts: List[np.ndarray] = []
-    with torch.no_grad():
-        for start in range(0, X.shape[0], batch_size):
-            xb = torch.tensor(X[start : start + batch_size], dtype=torch.float32, device=device)
-            zb = model.encoder(xb)
-            parts.append(zb.detach().cpu().numpy())
+    try:
+        with torch.no_grad():
+            xb = torch.tensor(np.asarray(X, dtype=np.float32), dtype=torch.float32, device=device)
+            emb = model.encoder(xb).detach().cpu().numpy().astype(np.float32, copy=False)
+        return emb
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        oom_markers = ("out of memory", "cuda error: out of memory")
+        if not any(marker in message for marker in oom_markers):
+            raise
 
-    if was_training:
-        model.train()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
-    if not parts:
-        return np.zeros((0, model.encoder[-1].out_features), dtype=np.float32)
-    return np.concatenate(parts, axis=0).astype(np.float32, copy=False)
+        parts: List[np.ndarray] = []
+        with torch.no_grad():
+            for start in range(0, X.shape[0], batch_size):
+                xb = torch.tensor(
+                    np.asarray(X[start : start + batch_size], dtype=np.float32),
+                    dtype=torch.float32,
+                    device=device,
+                )
+                zb = model.encoder(xb)
+                parts.append(zb.detach().cpu().numpy())
+
+        if not parts:
+            return np.zeros((0, model.encoder[-1].out_features), dtype=np.float32)
+        return np.concatenate(parts, axis=0).astype(np.float32, copy=False)
+    finally:
+        if was_training:
+            model.train()
