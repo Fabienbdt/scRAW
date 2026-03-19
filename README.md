@@ -1,33 +1,41 @@
 # scRAW
 
-scRAW is a clustering pipeline for single-cell RNA-seq data stored as `AnnData` objects.
+scRAW is a single-cell RNA-seq clustering pipeline for `AnnData` datasets.
+It combines preprocessing, representation learning, pseudo-label refinement,
+cell reweighting, optional batch-adversarial training, and final clustering in
+latent space.
 
-This repository follows a single execution path:
+## Pipeline Overview
 
-1. preprocessing of a raw `.h5ad` matrix with normalization, `log1p`, HVG selection, and scaling;
-2. MLP autoencoder training with a warm-up phase and a weighted phase;
-3. pseudo-label updates in latent space and dynamic cell weighting;
-4. final clustering on the learned embedding;
-5. metric computation and figure export.
+The default pipeline follows these steps:
 
-It is driven by:
+1. Load a `.h5ad` dataset.
+2. Apply cell and gene filtering.
+3. Run normalization, `log1p`, HVG selection, and scaling when the input looks
+   like raw counts.
+4. Train an MLP autoencoder with masking, dynamic cell weighting, and optional
+   triplet and batch-adversarial objectives.
+5. Update pseudo-labels in latent space during training.
+6. Run final clustering on the learned embedding.
+7. Compute metrics and export results, arrays, and figures.
 
-- a JSON file for hyperparameters and paths;
-- a notebook to launch and inspect one run;
-- a small Python API in `src/scraw/`.
+If the input matrix already contains negative values, scRAW assumes that the
+data has already been preprocessed and skips normalization, `log1p`, and HVG
+selection.
 
-## Repository layout
+## Repository Layout
 
 - `configs/default_scraw.json`: default experiment configuration.
-- `notebooks/scraw_demo.ipynb`: notebook example to run the pipeline.
-- `src/scraw/config.py`: JSON-backed configuration objects.
-- `src/scraw/preprocessing.py`: default preprocessing path.
-- `src/scraw/model.py`: autoencoder definition and device helpers.
-- `src/scraw/trainer.py`: training loop, masking, triplet loss, and dynamic weighting.
+- `notebooks/scraw_demo.ipynb`: notebook example for one complete run.
+- `src/scraw/config.py`: configuration dataclasses and JSON loading.
+- `src/scraw/preprocessing.py`: preprocessing path for raw or preprocessed data.
+- `src/scraw/model.py`: autoencoder and embedding utilities.
+- `src/scraw/trainer.py`: training loop, pseudo-label updates, weighting, and
+  adversarial branch.
 - `src/scraw/clustering.py`: pseudo-label and final clustering helpers.
 - `src/scraw/metrics.py`: evaluation metrics.
 - `src/scraw/plots.py`: plotting helpers.
-- `src/scraw/pipeline.py`: end-to-end execution entry point for notebooks/scripts.
+- `src/scraw/pipeline.py`: end-to-end execution entry point.
 
 ## Installation
 
@@ -38,41 +46,42 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-## Configuration
+## Usage
 
-The main parameters are defined in `configs/default_scraw.json`:
-
-- `data`: input `.h5ad` path, output directory, optional label column;
-- `runtime`: random seed and device selection;
-- `preprocessing`: cell/gene filters, target sum, HVG count, scaling;
-- `model`: hidden layers, latent dimension, dropout;
-- `training`: epochs, warm-up, batch size, learning rate, masking;
-- `weighting`: dynamic rare-cell weighting parameters;
-- `triplet`: optional rare-cell triplet loss;
-- `clustering`: pseudo-label method and final HDBSCAN settings;
-- `outputs`: figure and model export flags.
-
-## Notebook usage
-
-Open `notebooks/scraw_demo.ipynb`. The notebook is structured as follows:
-
-- it defines a version of the scRAW training procedure, including the autoencoder, pseudo-label update, dynamic weighting, and rare-cell triplet loss;
-- it loads and preprocesses one input dataset;
-- it runs the training procedure and displays the evaluation metrics and the UMAP comparison of ground-truth and predicted labels.
-
-For a shorter programmatic entry point, the equivalent high-level usage is:
+The main entry point is the Python API:
 
 ```python
 from scraw import load_config, run_pipeline
 
 config = load_config("configs/default_scraw.json")
 result = run_pipeline(config)
-result["metrics"]
+
+print(result["metrics"])
+print(result["output_dir"])
 ```
+
+## Configuration
+
+The default configuration lives in `configs/default_scraw.json`.
+The main sections are:
+
+- `data`: input dataset, output directory, optional label key.
+- `runtime`: random seed and device selection.
+- `preprocessing`: filtering, target sum, HVG selection, and scaling.
+- `model`: hidden layers, latent dimension, and dropout.
+- `training`: epochs, batch size, learning rate, masking, and gradient clip.
+- `weighting`: dynamic rare-cell weighting parameters.
+- `triplet`: optional triplet-loss settings.
+- `clustering`: pseudo-label method and final HDBSCAN settings.
+- `batch_correction`: optional adversarial batch correction settings.
+- `outputs`: control figure and model export.
+
+Label and batch columns can be provided explicitly in the configuration. When
+they are not set, scRAW tries to detect common column names automatically.
 
 ## Outputs
 
-A run writes the following files by default:
+By default, one run writes:
 
 - `config/config_used.json`
 - `results/results.json`
@@ -85,4 +94,11 @@ A run writes the following files by default:
 - `figures/loss_history.png`
 - `figures/latent_clusters.png`
 - `figures/latent_weights.png`
-- `figures/latent_ground_truth.png` when labels are available
+- `figures/latent_ground_truth.png` when ground-truth labels are available
+
+## Notes
+
+- The package metadata in `pyproject.toml` expects `README.md` at the repository
+  root.
+- The default configuration is set up for the Baron human pancreas example
+  dataset included in `data/`.
