@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from .clustering import final_clustering, pseudo_labels
 from .config import ScRAWConfig
-from .model import MLPAutoencoder, encode_in_batches, resolve_device
+from .model import MLPAutoencoder, encode_in_batches, gradient_reversal, resolve_device
 
 
 logger = logging.getLogger(__name__)
@@ -230,6 +231,7 @@ def _record_epoch(
     total_loss: float,
     reconstruction_loss: float,
     triplet_loss: float,
+    batch_adv_loss: float = 0.0,
 ) -> None:
     """Append one epoch summary to the loss history."""
     history.append(
@@ -239,6 +241,7 @@ def _record_epoch(
             "total_loss": float(total_loss),
             "reconstruction_loss": float(reconstruction_loss),
             "triplet_loss": float(triplet_loss),
+            "batch_adv_loss": float(batch_adv_loss),
         }
     )
 
@@ -250,7 +253,12 @@ class ScRAWTrainer:
         self.config = config
         self.device = resolve_device(config.runtime.device)
 
-    def fit(self, X: np.ndarray) -> TrainingResult:
+    def fit(
+        self,
+        X: np.ndarray,
+        labels: Optional[np.ndarray] = None,
+        batch_ids: Optional[np.ndarray] = None,
+    ) -> TrainingResult:
         """Train the autoencoder, update dynamic weights, and cluster embeddings."""
         torch.manual_seed(int(self.config.runtime.seed))
         np.random.seed(int(self.config.runtime.seed))
@@ -260,8 +268,54 @@ class ScRAWTrainer:
             raise ValueError("Input matrix must be a non-empty 2D array.")
 
         n_cells, n_features = X.shape
+        resolved_pseudo_k = 0
+        if int(self.config.clustering.pseudo_k) > 1:
+            resolved_pseudo_k = int(self.config.clustering.pseudo_k)
+        elif labels is not None:
+            resolved_pseudo_k = int(len(np.unique(np.asarray(labels))))
+        clustering_config = (
+            replace(self.config.clustering, pseudo_k=resolved_pseudo_k)
+            if resolved_pseudo_k > 1
+            else self.config.clustering
+        )
+
+        batch_enabled = bool(self.config.batch_correction.enabled)
+        adv_weight = float(self.config.batch_correction.adversarial_weight)
+        batch_index = None if batch_ids is None else np.asarray(batch_ids, dtype=object)
+        batch_index_encoded: Optional[np.ndarray] = None
+        n_batches = 1
+        if batch_enabled and adv_weight > 0.0:
+            if batch_index is None:
+                raise ValueError("Batch correction is enabled but no batch ids were provided.")
+            if len(batch_index) != n_cells:
+                raise ValueError("Batch id length does not match the number of cells.")
+            unique_batches = sorted(np.unique(batch_index).tolist())
+            n_batches = len(unique_batches)
+            if n_batches >= 2:
+                mapping = {value: idx for idx, value in enumerate(unique_batches)}
+                batch_index_encoded = np.asarray(
+                    [mapping[value] for value in batch_index],
+                    dtype=np.int64,
+                )
+            else:
+                logger.warning(
+                    "Batch correction requested but only one batch was found; disabling the adversarial branch."
+                )
+
         model = MLPAutoencoder(input_dim=n_features, config=self.config.model).to(self.device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=float(self.config.training.learning_rate))
+        params: List[torch.nn.Parameter] = list(model.parameters())
+        batch_head: Optional[nn.Module] = None
+        if batch_enabled and adv_weight > 0.0 and batch_index_encoded is not None:
+            hidden_dim = max(8, int(self.config.model.latent_dim) // 2)
+            batch_head = nn.Sequential(
+                nn.Linear(int(self.config.model.latent_dim), hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(hidden_dim, n_batches),
+            ).to(self.device)
+            params += list(batch_head.parameters())
+
+        optimizer = torch.optim.Adam(params, lr=float(self.config.training.learning_rate))
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=max(1, int(self.config.training.epochs)),
@@ -283,6 +337,9 @@ class ScRAWTrainer:
         current_density_component = np.ones(n_cells, dtype=np.float32)
         current_pseudo = np.zeros(n_cells, dtype=np.int64)
         loss_history: List[Dict[str, Any]] = []
+        adv_start_epoch = int(self.config.batch_correction.start_epoch)
+        adv_ramp_epochs = int(self.config.batch_correction.ramp_epochs)
+        adv_lambda = float(self.config.batch_correction.adversarial_lambda)
 
         for epoch in range(int(self.config.training.epochs)):
             weighted_phase = epoch >= int(self.config.training.warmup_epochs)
@@ -301,7 +358,7 @@ class ScRAWTrainer:
                 )
                 pseudo_for_weights = pseudo_labels(
                     embeddings_for_weights,
-                    config=self.config.clustering,
+                    config=clustering_config,
                     runtime=self.config.runtime,
                 )
                 weight_components = _combined_cell_weights(
@@ -350,6 +407,7 @@ class ScRAWTrainer:
             total_sum = 0.0
             reconstruction_sum = 0.0
             triplet_sum = 0.0
+            batch_adv_sum = 0.0
             n_batches_seen = 0
 
             for xb, idx_tensor in loader:
@@ -405,14 +463,26 @@ class ScRAWTrainer:
                 else:
                     triplet_ramp = 0.0
 
-                total_loss = reconstruction_loss + (
-                    triplet_ramp * float(self.config.triplet.weight) * triplet_loss
+                adv_loss = torch.tensor(0.0, device=self.device)
+                if batch_head is not None and batch_index_encoded is not None and epoch >= adv_start_epoch:
+                    if adv_ramp_epochs > 0:
+                        frac = min(1.0, (epoch - adv_start_epoch + 1) / float(adv_ramp_epochs))
+                    else:
+                        frac = 1.0
+                    logits = batch_head(gradient_reversal(z, lambda_=adv_lambda * frac))
+                    yb = torch.tensor(batch_index_encoded[idx], dtype=torch.long, device=self.device)
+                    adv_loss = nn.functional.cross_entropy(logits, yb)
+
+                total_loss = (
+                    reconstruction_loss
+                    + (triplet_ramp * float(self.config.triplet.weight) * triplet_loss)
+                    + (adv_weight * adv_loss)
                 )
 
                 optimizer.zero_grad()
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
+                    params,
                     max_norm=float(self.config.training.gradient_clip),
                 )
                 optimizer.step()
@@ -420,6 +490,7 @@ class ScRAWTrainer:
                 total_sum += float(total_loss.detach().cpu().item())
                 reconstruction_sum += float(reconstruction_loss.detach().cpu().item())
                 triplet_sum += float(triplet_loss.detach().cpu().item())
+                batch_adv_sum += float(adv_loss.detach().cpu().item())
                 n_batches_seen += 1
 
             if n_batches_seen == 0:
@@ -434,6 +505,7 @@ class ScRAWTrainer:
                 total_loss=total_sum / n_batches_seen,
                 reconstruction_loss=reconstruction_sum / n_batches_seen,
                 triplet_loss=triplet_sum / n_batches_seen,
+                batch_adv_loss=batch_adv_sum / n_batches_seen,
             )
 
         final_embeddings = encode_in_batches(
@@ -444,7 +516,7 @@ class ScRAWTrainer:
         )
         final_labels = final_clustering(
             final_embeddings,
-            config=self.config.clustering,
+            config=clustering_config,
             runtime=self.config.runtime,
         )
 

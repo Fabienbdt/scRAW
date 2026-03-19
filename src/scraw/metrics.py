@@ -95,6 +95,30 @@ def _rare_acc(labels_true: np.ndarray, labels_pred: np.ndarray, threshold: float
     return float(np.mean(aligned[rare_mask] == labels_true[rare_mask]))
 
 
+def _classwise(labels_true: np.ndarray, labels_pred: np.ndarray) -> Dict[str, Dict[str, float]]:
+    """Return per-class precision/recall/F1/support after alignment."""
+    from sklearn.metrics import precision_recall_fscore_support
+
+    aligned = align_labels(labels_true, labels_pred)
+    classes = np.unique(labels_true)
+    precision, recall, f1, support = precision_recall_fscore_support(
+        labels_true,
+        aligned,
+        labels=classes,
+        zero_division=0,
+    )
+
+    out: Dict[str, Dict[str, float]] = {}
+    for idx, cls in enumerate(classes):
+        out[str(cls)] = {
+            "Precision": float(precision[idx]),
+            "Recall": float(recall[idx]),
+            "F1": float(f1[idx]),
+            "Support": int(support[idx]),
+        }
+    return out
+
+
 def _knn_purity(latent: np.ndarray, labels: np.ndarray, n_neighbors: int = 30) -> float:
     """Compute class-balanced kNN purity in latent space."""
     from sklearn.neighbors import NearestNeighbors
@@ -152,10 +176,12 @@ def compute_metrics(
         "NMI": float("nan"),
         "ARI": float("nan"),
         "ACC": float("nan"),
+        "UCA": float("nan"),
         "F1_Macro": float("nan"),
         "BalancedACC": float("nan"),
         "RareACC": float("nan"),
         "KNN_Purity": float("nan"),
+        "ClassWise": {},
         "Silhouette": float("nan"),
         "n_clusters_found": int(len(np.unique(labels_pred))) if len(labels_pred) else 0,
         "n_samples_evaluated": int(len(labels_pred)),
@@ -165,11 +191,14 @@ def compute_metrics(
         metrics["NMI"] = float(normalized_mutual_info_score(labels_true, labels_pred))
         metrics["ARI"] = float(adjusted_rand_score(labels_true, labels_pred))
         metrics["ACC"] = _accuracy(labels_true, labels_pred)
+        metrics["UCA"] = metrics["ACC"]
         metrics.update(_balanced_metrics(labels_true, labels_pred))
 
         rare_accuracy = _rare_acc(labels_true, labels_pred)
         if rare_accuracy is not None:
             metrics["RareACC"] = float(rare_accuracy)
+
+        metrics["ClassWise"] = _classwise(labels_true, labels_pred)
 
         if embeddings is not None and len(embeddings) == len(labels_true):
             metrics["KNN_Purity"] = _knn_purity(embeddings, labels_true)

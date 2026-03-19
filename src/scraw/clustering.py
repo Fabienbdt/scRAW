@@ -124,7 +124,7 @@ def _reassign_noise_to_centroids(embeddings: np.ndarray, labels: np.ndarray) -> 
     labels = np.asarray(labels, dtype=np.int64).copy()
     keep = labels >= 0
     if not np.any(keep):
-        return remap_contiguous_labels(np.zeros_like(labels))
+        return kmeans_labels(embeddings, k=max(2, min(embeddings.shape[0] - 1, 8)), seed=42)
 
     unique_clusters = sorted(np.unique(labels[keep]).tolist())
     centroids = np.asarray(
@@ -148,12 +148,17 @@ def final_clustering(
 
     emb = sanitize_embeddings(embeddings)
     fallback_k = estimate_pseudo_k(emb.shape[0], config)
+    cluster_selection_method = str(
+        getattr(config, "hdbscan_cluster_selection_method", "eom") or "eom"
+    ).strip().lower()
+    if cluster_selection_method not in {"eom", "leaf"}:
+        cluster_selection_method = "eom"
 
     try:
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=max(2, int(config.hdbscan_min_cluster_size)),
             min_samples=max(1, int(config.hdbscan_min_samples)),
-            cluster_selection_method="eom",
+            cluster_selection_method=cluster_selection_method,
             metric="euclidean",
             core_dist_n_jobs=1,
         )

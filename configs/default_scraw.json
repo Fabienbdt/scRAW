@@ -2,15 +2,15 @@
   "data": {
     "data_path": "data/baron_human_pancreas.h5ad",
     "output_dir": "results/default_run",
-    "label_key": null
+    "label_key": "Group"
   },
   "runtime": {
     "seed": 42,
-    "device": "auto"
+    "device": "cuda"
   },
   "preprocessing": {
-    "min_genes_per_cell": 100,
-    "max_genes_per_cell": 10000,
+    "min_genes_per_cell": 200,
+    "max_genes_per_cell": null,
     "min_cells_per_gene": 3,
     "target_sum": 20000.0,
     "n_top_genes": 2000,
@@ -59,7 +59,17 @@
     "pseudo_k_max": 30,
     "hdbscan_min_cluster_size": 8,
     "hdbscan_min_samples": 8,
+    "hdbscan_cluster_selection_method": "eom",
     "hdbscan_reassign_noise": true
+  },
+  "batch_correction": {
+    "enabled": true,
+    "key": "batch",
+    "adversarial_weight": 0.056150696336115635,
+    "adversarial_lambda": 1.75,
+    "start_epoch": 55,
+    "ramp_epochs": 60,
+    "mmd_weight": 0.0
   },
   "outputs": {
     "save_figures": true,

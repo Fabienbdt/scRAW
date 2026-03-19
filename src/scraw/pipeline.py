@@ -63,6 +63,26 @@ def _detect_label_key(adata: Any, configured_key: Optional[str]) -> Optional[str
     return None
 
 
+def _detect_batch_key(adata: Any, preferred: Optional[str]) -> Optional[str]:
+    """Resolve the batch column used by the adversarial branch."""
+    if preferred and preferred in adata.obs.columns:
+        return preferred
+
+    for candidate in [
+        "batch",
+        "Batch",
+        "study",
+        "dataset",
+        "donor",
+        "sample",
+        "patient",
+        "tech",
+    ]:
+        if candidate in adata.obs.columns:
+            return candidate
+    return None
+
+
 def _prepare_output_dirs(output_dir: Path) -> Dict[str, Path]:
     """Create the output directory tree used by the pipeline."""
     paths = {
@@ -147,15 +167,27 @@ def run_pipeline(config: ScRAWConfig | str | Path) -> Dict[str, Any]:
     import scanpy as sc
 
     adata = sc.read_h5ad(Path(config.data.data_path).expanduser().resolve())
-    label_key = _detect_label_key(adata, config.data.label_key)
-    true_labels = None if label_key is None else np.asarray(adata.obs[label_key].astype(str).to_numpy(), dtype=object)
-
     adata_proc = preprocess_adata(adata, config.preprocessing)
+    label_key = _detect_label_key(adata_proc, config.data.label_key)
+    true_labels = (
+        None
+        if label_key is None
+        else np.asarray(adata_proc.obs[label_key].astype(str).to_numpy(), dtype=object)
+    )
+    batch_key = _detect_batch_key(
+        adata_proc,
+        preferred=str(config.batch_correction.key or "").strip() or None,
+    )
+    batch_ids = (
+        None
+        if batch_key is None
+        else np.asarray(adata_proc.obs[batch_key].astype(str).to_numpy(), dtype=object)
+    )
     X_proc = adata_proc.X.toarray() if hasattr(adata_proc.X, "toarray") else np.asarray(adata_proc.X)
     X_proc = np.asarray(X_proc, dtype=np.float32)
 
     trainer = ScRAWTrainer(config)
-    result = trainer.fit(X_proc)
+    result = trainer.fit(X_proc, labels=true_labels, batch_ids=batch_ids)
     metrics = compute_metrics(
         labels_true=true_labels,
         labels_pred=result.labels,
@@ -165,6 +197,7 @@ def run_pipeline(config: ScRAWConfig | str | Path) -> Dict[str, Any]:
     config_used = config.to_dict()
     summary = {
         "label_key": label_key,
+        "batch_key": batch_key,
         "n_cells": int(adata_proc.n_obs),
         "n_genes": int(adata_proc.n_vars),
         "device": result.device,
@@ -197,6 +230,7 @@ def run_pipeline(config: ScRAWConfig | str | Path) -> Dict[str, Any]:
     return {
         "config": config_used,
         "label_key": label_key,
+        "batch_key": batch_key,
         "metrics": metrics,
         "embeddings": result.embeddings,
         "labels": result.labels,

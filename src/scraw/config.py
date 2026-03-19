@@ -23,8 +23,8 @@ class RuntimeConfig:
 
 @dataclass
 class PreprocessingConfig:
-    min_genes_per_cell: int = 100
-    max_genes_per_cell: int = 10000
+    min_genes_per_cell: int = 200
+    max_genes_per_cell: Optional[int] = None
     min_cells_per_gene: int = 3
     target_sum: float = 20000.0
     n_top_genes: int = 2000
@@ -83,7 +83,19 @@ class ClusteringConfig:
     pseudo_k_max: int = 30
     hdbscan_min_cluster_size: int = 8
     hdbscan_min_samples: int = 8
+    hdbscan_cluster_selection_method: str = "eom"
     hdbscan_reassign_noise: bool = True
+
+
+@dataclass
+class BatchCorrectionConfig:
+    enabled: bool = True
+    key: str = "batch"
+    adversarial_weight: float = 0.056150696336115635
+    adversarial_lambda: float = 1.75
+    start_epoch: int = 55
+    ramp_epochs: int = 60
+    mmd_weight: float = 0.0
 
 
 @dataclass
@@ -102,6 +114,7 @@ class ScRAWConfig:
     weighting: WeightingConfig = field(default_factory=WeightingConfig)
     triplet: TripletConfig = field(default_factory=TripletConfig)
     clustering: ClusteringConfig = field(default_factory=ClusteringConfig)
+    batch_correction: BatchCorrectionConfig = field(default_factory=BatchCorrectionConfig)
     outputs: OutputConfig = field(default_factory=OutputConfig)
 
     @classmethod
@@ -120,6 +133,9 @@ class ScRAWConfig:
             triplet=TripletConfig(**{**asdict(TripletConfig()), **payload.get("triplet", {})}),
             clustering=ClusteringConfig(
                 **{**asdict(ClusteringConfig()), **payload.get("clustering", {})}
+            ),
+            batch_correction=BatchCorrectionConfig(
+                **{**asdict(BatchCorrectionConfig()), **payload.get("batch_correction", {})}
             ),
             outputs=OutputConfig(**{**asdict(OutputConfig()), **payload.get("outputs", {})}),
         )

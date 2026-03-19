@@ -15,6 +15,25 @@ from .config import ModelConfig
 logger = logging.getLogger(__name__)
 
 
+class _GradientReversalFunction(torch.autograd.Function):
+    """Identity in forward pass, sign flip in backward pass."""
+
+    @staticmethod
+    def forward(ctx: object, x: torch.Tensor, lambda_: torch.Tensor) -> torch.Tensor:
+        ctx.lambda_ = float(lambda_.item())
+        return x.clone()
+
+    @staticmethod
+    def backward(ctx: object, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
+        return -ctx.lambda_ * grad_output, None
+
+
+def gradient_reversal(x: torch.Tensor, lambda_: float = 1.0) -> torch.Tensor:
+    """Apply gradient reversal to the latent representation."""
+    lam = torch.tensor(float(lambda_), dtype=torch.float32, device=x.device)
+    return _GradientReversalFunction.apply(x, lam)
+
+
 def parse_hidden_layers(raw: Iterable[int] | str | None) -> List[int]:
     """Parse hidden-layer sizes from a list/tuple or a comma-separated string."""
     if isinstance(raw, (list, tuple)):
