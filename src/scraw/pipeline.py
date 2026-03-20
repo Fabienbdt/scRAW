@@ -183,8 +183,7 @@ def run_pipeline(config: ScRAWConfig | str | Path) -> Dict[str, Any]:
         if batch_key is None
         else np.asarray(adata_proc.obs[batch_key].astype(str).to_numpy(), dtype=object)
     )
-    X_proc = adata_proc.X.toarray() if hasattr(adata_proc.X, "toarray") else np.asarray(adata_proc.X)
-    X_proc = np.asarray(X_proc, dtype=np.float32)
+    X_proc = np.asarray(adata_proc.X, dtype=np.float32)
 
     trainer = ScRAWTrainer(config)
     result = trainer.fit(X_proc, labels=true_labels, batch_ids=batch_ids)

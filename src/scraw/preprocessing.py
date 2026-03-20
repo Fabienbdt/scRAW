@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 import logging
 import numpy as np
+from scipy import sparse
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,23 @@ def _as_dict(params: Any) -> Dict[str, Any]:
     if is_dataclass(params):
         return asdict(params)
     return dict(params)
+
+
+def _has_negative_values(matrix: Any) -> bool:
+    """Check whether a dense or sparse expression matrix contains negative values."""
+    if sparse.issparse(matrix):
+        data = np.asarray(matrix.data)
+        return bool(data.size and np.nanmin(data) < 0)
+
+    arr = np.asarray(matrix)
+    return bool(arr.size and np.nanmin(arr) < 0)
+
+
+def _to_dense_float32(matrix: Any) -> np.ndarray:
+    """Convert one matrix to a dense float32 NumPy array."""
+    if sparse.issparse(matrix):
+        return matrix.toarray().astype(np.float32, copy=False)
+    return np.asarray(matrix, dtype=np.float32)
 
 
 def preprocess_adata(adata: Any, params: Any) -> Any:
@@ -49,8 +67,7 @@ def preprocess_adata(adata: Any, params: Any) -> Any:
     if adata.n_obs == 0 or adata.n_vars == 0:
         raise ValueError("Preprocessing removed all cells or genes.")
 
-    X_probe = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)
-    looks_processed = bool(X_probe.size and np.nanmin(X_probe) < 0)
+    looks_processed = _has_negative_values(adata.X)
     if looks_processed:
         logger.warning(
             "Input matrix contains negative values; assuming it is already preprocessed."
@@ -68,12 +85,12 @@ def preprocess_adata(adata: Any, params: Any) -> Any:
                 subset=True,
             )
 
-    X = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)
-    X = np.asarray(X, dtype=np.float32)
+    X = _to_dense_float32(adata.X)
     mean = np.mean(X, axis=0)
     std = np.std(X, axis=0)
     std[std == 0.0] = 1.0
     X = (X - mean) / std
-    X = np.clip(X, -float(cfg.get("scale_max_value", 10.0)), float(cfg.get("scale_max_value", 10.0)))
-    adata.X = np.asarray(X, dtype=np.float32)
+    scale_max_value = float(cfg.get("scale_max_value", 10.0))
+    np.clip(X, -scale_max_value, scale_max_value, out=X)
+    adata.X = X
     return adata
