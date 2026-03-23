@@ -39,8 +39,8 @@ selection.
 
 ## Installation
 
-For an exact reproduction of the validated Baron `seed=42` run, use the same
-environment as the reference local run:
+For the validated Baron run, use the same environment as the reference local
+run:
 
 - Python `3.12.3`
 - Linux `x86_64`
@@ -59,40 +59,22 @@ python -m pip install -r requirements.txt
 export PYTHONPATH=src
 ```
 
-## Exact Baron Reproduction
+## Run scRAW
 
-The validated reproduction was run from commit `f50c028dd3e04fd0b3b110a4e1df03c16fd40035`
-with the default configuration on `data/baron_human_pancreas.h5ad`, `seed=42`,
-and `device="cuda"`.
+The default configuration in `configs/default_scraw.json` is the recommended
+entry point. It uses:
 
-From a clean clone, the reference run can be launched with:
+- `data/baron_human_pancreas.h5ad`
+- `results/default_run`
+- `seed = 42`
+- `device = "cuda"`
 
-```bash
-cd scRAW
-source .venv/bin/activate
-PYTHONPATH=src python -c 'from scraw import load_config, run_pipeline; config = load_config("configs/default_scraw.json"); config.data.data_path = "data/baron_human_pancreas.h5ad"; config.data.output_dir = "results/baron_default_seed42"; config.runtime.seed = 42; config.runtime.device = "cuda"; result = run_pipeline(config); print(result["metrics"]); print(result["output_dir"])'
-```
-
-## Usage
-
-The main entry point is the Python API:
-
-```python
-from scraw import load_config, run_pipeline
-
-config = load_config("configs/default_scraw.json")
-result = run_pipeline(config)
-
-print(result["metrics"])
-print(result["output_dir"])
-```
-
-Run the snippet from the repository root with `PYTHONPATH=src`, for example:
+Run scRAW from the repository root with:
 
 ```bash
 cd scRAW
 source .venv/bin/activate
-PYTHONPATH=src python your_script.py
+PYTHONPATH=src python -c 'from scraw import load_config, run_pipeline; config = load_config("configs/default_scraw.json"); result = run_pipeline(config); print(result["metrics"]); print(result["output_dir"])'
 ```
 
 ## Configuration
