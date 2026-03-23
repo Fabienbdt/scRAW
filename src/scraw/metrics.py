@@ -26,7 +26,7 @@ def _filter_noise(
     mask_pred = np.ones(len(labels_pred), dtype=bool)
     labels_pred_str = labels_pred.astype(str)
     for value in NOISE_LABELS:
-        mask_pred &= labels_pred_str != str(value)
+        mask_pred = np.logical_and(mask_pred, labels_pred_str != str(value))
 
     if labels_true is None:
         filtered_embeddings = embeddings[mask_pred] if embeddings is not None else None
@@ -36,7 +36,7 @@ def _filter_noise(
     mask_true = np.ones(len(labels_true), dtype=bool)
     labels_true_str = labels_true.astype(str)
     for value in NOISE_LABELS:
-        mask_true &= labels_true_str != str(value)
+        mask_true = np.logical_and(mask_true, labels_true_str != str(value))
 
     mask = mask_pred & mask_true
     filtered_embeddings = embeddings[mask] if embeddings is not None else None

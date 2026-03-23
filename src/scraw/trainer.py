@@ -282,6 +282,20 @@ class ScRAWTrainer:
         torch.manual_seed(int(self.config.runtime.seed))
         np.random.seed(int(self.config.runtime.seed))
 
+    def _should_print_epoch(self, epoch: int, total_epochs: int) -> bool:
+        """Return whether one short progress line should be printed this epoch."""
+        if total_epochs <= 20:
+            return True
+
+        progress_interval = max(1, total_epochs // 10)
+        warmup_epoch = int(self.config.training.warmup_epochs)
+        return (
+            epoch == 0
+            or epoch == warmup_epoch
+            or (epoch + 1) == total_epochs
+            or ((epoch + 1) % progress_interval) == 0
+        )
+
     def _validate_input_matrix(self, X: np.ndarray) -> np.ndarray:
         """Validate and normalize the input expression matrix."""
         X = np.asarray(X, dtype=np.float32)
@@ -693,8 +707,9 @@ class ScRAWTrainer:
         loader = self._build_loader(X)
         weight_state = self._initialize_dynamic_weight_state(n_cells)
         loss_history: List[Dict[str, Any]] = []
+        total_epochs = int(self.config.training.epochs)
 
-        for epoch in range(int(self.config.training.epochs)):
+        for epoch in range(total_epochs):
             if self._should_refresh_dynamic_weights(epoch):
                 weight_state = self._refresh_dynamic_weight_state(
                     model=model,
@@ -724,6 +739,17 @@ class ScRAWTrainer:
                 triplet_loss=epoch_stats.triplet_loss,
                 batch_adv_loss=epoch_stats.batch_adv_loss,
             )
+            if self._should_print_epoch(epoch, total_epochs):
+                print(
+                    (
+                        f"[scRAW] Epoch {epoch + 1}/{total_epochs} "
+                        f"phase={phase} "
+                        f"total_loss={epoch_stats.total_loss:.4f} "
+                        f"recon_loss={epoch_stats.reconstruction_loss:.4f} "
+                        f"triplet_loss={epoch_stats.triplet_loss:.4f}"
+                    ),
+                    flush=True,
+                )
 
         return self._finalize_training(
             model=model,
