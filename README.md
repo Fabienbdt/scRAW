@@ -39,11 +39,38 @@ selection.
 
 ## Installation
 
+For an exact reproduction of the validated Baron `seed=42` run, use the same
+environment as the reference local run:
+
+- Python `3.12.3`
+- Linux `x86_64`
+- NVIDIA CUDA `12.4`
+- dependency versions from `requirements.txt`
+
+This repository is meant to be run directly from the source tree. Install the
+pinned dependencies from `requirements.txt`, then use `PYTHONPATH=src`.
+
 ```bash
 cd scRAW
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip install -e .
+export PYTHONPATH=src
+```
+
+## Exact Baron Reproduction
+
+The validated reproduction was run from commit `f50c028dd3e04fd0b3b110a4e1df03c16fd40035`
+with the default configuration on `data/baron_human_pancreas.h5ad`, `seed=42`,
+and `device="cuda"`.
+
+From a clean clone, the reference run can be launched with:
+
+```bash
+cd scRAW
+source .venv/bin/activate
+PYTHONPATH=src python -c 'from scraw import load_config, run_pipeline; config = load_config("configs/default_scraw.json"); config.data.data_path = "data/baron_human_pancreas.h5ad"; config.data.output_dir = "results/baron_default_seed42"; config.runtime.seed = 42; config.runtime.device = "cuda"; result = run_pipeline(config); print(result["metrics"]); print(result["output_dir"])'
 ```
 
 ## Usage
@@ -58,6 +85,14 @@ result = run_pipeline(config)
 
 print(result["metrics"])
 print(result["output_dir"])
+```
+
+Run the snippet from the repository root with `PYTHONPATH=src`, for example:
+
+```bash
+cd scRAW
+source .venv/bin/activate
+PYTHONPATH=src python your_script.py
 ```
 
 ## Configuration
@@ -98,7 +133,5 @@ By default, one run writes:
 
 ## Notes
 
-- The package metadata in `pyproject.toml` expects `README.md` at the repository
-  root.
 - The default configuration is set up for the Baron human pancreas example
   dataset included in `data/`.

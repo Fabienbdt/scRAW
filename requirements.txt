@@ -1,10 +1,13 @@
-# Stable, cross-OS pinned stack for scRAW reproducibility.
-# Recommended Python: 3.11.x (works with 3.10-3.12).
+# Exact environment used for the validated Baron seed=42 reproduction.
+# Tested on Linux x86_64 with Python 3.12.3 and NVIDIA CUDA 12.4.
+# Install with:
+#   python3.12 -m pip install --upgrade pip
+#   python3.12 -m pip install -r requirements.txt
 #
-# Torch note:
-# - This pin is CPU-compatible on all OS.
-# - For NVIDIA CUDA runs, install matching CUDA wheel after this file, e.g.:
-#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+# This file intentionally pins the exact dependency versions and the CUDA build
+# of PyTorch used for the reference run. It is not meant to be cross-platform.
+
+--extra-index-url https://download.pytorch.org/whl/cu124
 
 numpy==1.26.4
 scipy==1.14.1
@@ -24,4 +27,4 @@ hdbscan==0.8.40
 igraph==0.11.8
 leidenalg==0.10.2
 
-torch==2.5.1
+torch==2.5.1+cu124
