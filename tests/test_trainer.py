@@ -173,35 +173,3 @@ def test_trainer_strict_repro_seeds_python_numpy_torch_and_cuda(base_config, mon
         torch.use_deterministic_algorithms(old_use_deterministic)
         torch.backends.cudnn.benchmark = old_benchmark
         torch.backends.cudnn.deterministic = old_deterministic
-
-
-def test_trainer_strict_repro_uses_seeded_dataloader_generator(
-    base_config,
-    monkeypatch,
-) -> None:
-    import scraw.trainer as trainer_module
-    import torch.utils.data
-
-    config = base_config
-    config.runtime.strict_repro = True
-
-    captured: dict[str, object] = {}
-
-    def fake_dataloader(dataset, **kwargs):
-        captured["dataset"] = dataset
-        captured["kwargs"] = kwargs
-        return kwargs
-
-    monkeypatch.setattr(torch.utils.data, "DataLoader", fake_dataloader)
-
-    trainer = trainer_module.ScRAWTrainer(config)
-    X, _, _ = _make_trainer_data()
-    out = trainer._build_loader(X)
-
-    kwargs = captured["kwargs"]
-    assert out is kwargs
-    assert kwargs["shuffle"] is True
-    assert kwargs["batch_size"] == config.training.batch_size
-    assert kwargs["num_workers"] == 0
-    assert isinstance(kwargs["generator"], torch.Generator)
-    assert kwargs["generator"].initial_seed() == config.runtime.seed

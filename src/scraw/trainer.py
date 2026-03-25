@@ -407,19 +407,10 @@ class ScRAWTrainer:
 
         x_tensor_cpu = torch.from_numpy(X).float()
         index_tensor_cpu = torch.arange(X.shape[0], dtype=torch.long)
-        loader_kwargs: Dict[str, Any] = {
-            "batch_size": int(self.config.training.batch_size),
-            "shuffle": True,
-        }
-        if bool(self.config.runtime.strict_repro):
-            generator = torch.Generator()
-            generator.manual_seed(int(self.config.runtime.seed))
-            loader_kwargs["generator"] = generator
-            loader_kwargs["num_workers"] = 0
-
         return DataLoader(
             TensorDataset(x_tensor_cpu, index_tensor_cpu),
-            **loader_kwargs,
+            batch_size=int(self.config.training.batch_size),
+            shuffle=True,
         )
 
     def _initialize_dynamic_weight_state(self, n_cells: int) -> DynamicWeightState:
