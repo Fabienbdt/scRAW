@@ -72,6 +72,7 @@ entry point. It uses:
 - `results/default_run`
 - `seed = 42`
 - `device = "cuda"`
+- `strict_repro = true`
 
 Run scRAW from the repository root with:
 
@@ -89,6 +90,7 @@ The main sections are:
 
 - `data`: input dataset, output directory, optional label key.
 - `runtime`: random seed and device selection.
+  The default runtime also enables strict deterministic PyTorch/CUDA settings.
 - `preprocessing`: filtering, target sum, HVG selection, and scaling.
 - `model`: hidden layers, latent dimension, and dropout.
 - `training`: epochs, batch size, learning rate, masking, and gradient clip.

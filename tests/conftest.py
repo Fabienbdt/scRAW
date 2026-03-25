@@ -54,6 +54,7 @@ def toy_adata_no_batch():
 def base_config() -> ScRAWConfig:
     config = ScRAWConfig()
     config.runtime.device = "cpu"
+    config.runtime.strict_repro = False
     config.training.epochs = 2
     config.training.warmup_epochs = 1
     config.training.batch_size = 6

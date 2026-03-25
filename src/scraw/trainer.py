@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import logging
+import os
+import random
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -275,12 +277,31 @@ class ScRAWTrainer:
 
     def __init__(self, config: ScRAWConfig) -> None:
         self.config = config
+        self._configure_runtime_environment()
         self.device = resolve_device(config.runtime.device)
+
+    def _configure_runtime_environment(self) -> None:
+        """Apply process-wide runtime settings before any CUDA device resolution."""
+        strict_repro = bool(self.config.runtime.strict_repro)
+        if strict_repro:
+            # CuBLAS reads this workspace setting during CUDA initialization.
+            os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+        cudnn_backend = getattr(torch.backends, "cudnn", None)
+        if cudnn_backend is not None:
+            cudnn_backend.benchmark = False
+            cudnn_backend.deterministic = strict_repro
+
+        torch.use_deterministic_algorithms(strict_repro)
 
     def _set_random_seeds(self) -> None:
         """Seed NumPy and torch for reproducible training runs."""
-        torch.manual_seed(int(self.config.runtime.seed))
-        np.random.seed(int(self.config.runtime.seed))
+        seed = int(self.config.runtime.seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        if bool(self.config.runtime.strict_repro):
+            torch.cuda.manual_seed_all(seed)
 
     def _should_print_epoch(self, epoch: int, total_epochs: int) -> bool:
         """Return whether one short progress line should be printed this epoch."""

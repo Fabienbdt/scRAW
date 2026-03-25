@@ -1,7 +1,7 @@
 {
   "data": {
     "data_path": "data/baron_human_pancreas.h5ad",
-    "output_dir": "results/default_run",
+    "output_dir": "results/default_run_py31012",
     "label_key": "Group"
   },
   "runtime": {

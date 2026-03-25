@@ -19,6 +19,7 @@ class DataConfig:
 class RuntimeConfig:
     seed: int = 42
     device: str = "auto"
+    strict_repro: bool = True
 
 
 @dataclass
