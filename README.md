@@ -48,7 +48,8 @@ run:
 - dependency versions from `requirements.txt`
 
 This repository is meant to be run directly from the source tree. Install the
-pinned dependencies from `requirements.txt`, then use `PYTHONPATH=src`.
+pinned dependencies from `requirements.txt`, then add the repository `src/`
+directory to `PYTHONPATH` with an absolute path.
 
 ```bash
 cd scRAW
@@ -56,8 +57,11 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-export PYTHONPATH=src
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
+
+The absolute path is intentional: using a relative `src` path can fail if
+Python is launched from a different working directory.
 
 ## Run scRAW
 
@@ -74,7 +78,8 @@ Run scRAW from the repository root with:
 ```bash
 cd scRAW
 source .venv/bin/activate
-PYTHONPATH=src python -c 'from scraw import load_config, run_pipeline; config = load_config("configs/default_scraw.json"); result = run_pipeline(config); print(result["metrics"]); print(result["output_dir"])'
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -c 'from scraw import load_config, run_pipeline; config = load_config("configs/default_scraw.json"); result = run_pipeline(config); print(result["metrics"]); print(result["output_dir"])'
 ```
 
 ## Configuration
