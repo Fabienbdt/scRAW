@@ -11,8 +11,10 @@ import numpy as np
 import pandas as pd
 import torch
 
+from .clustering import final_clustering
 from .config import ScRAWConfig, load_config
 from .metrics import compute_metrics
+from .model import MLPAutoencoder, encode_in_batches
 from .plots import (
     plot_embedding_categories,
     plot_embedding_weights,
@@ -115,6 +117,16 @@ def _save_arrays(result: TrainingResult, output_dir: Path) -> None:
     np.save(output_dir / "cell_weights.npy", np.asarray(result.cell_weights, dtype=np.float32))
 
 
+def _save_inference_arrays(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    output_dir: Path,
+) -> None:
+    """Persist inference-only arrays for checkpoint replay diagnostics."""
+    np.save(output_dir / "embeddings.npy", np.asarray(embeddings, dtype=np.float32))
+    np.save(output_dir / "final_labels.npy", np.asarray(labels, dtype=np.int64))
+
+
 def _save_figures(
     result: TrainingResult,
     true_labels: Optional[np.ndarray],
@@ -154,6 +166,53 @@ def _save_figures(
             ),
             output_dir / "latent_ground_truth.png",
         )
+
+
+def _save_inference_figures(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    true_labels: Optional[np.ndarray],
+    output_dir: Path,
+    seed: int,
+) -> None:
+    """Generate the figure subset that remains meaningful in inference-only mode."""
+    save_figure(
+        plot_embedding_categories(
+            embeddings,
+            labels,
+            title="scRAW latent space colored by final clusters",
+            random_state=seed,
+        ),
+        output_dir / "latent_clusters.png",
+    )
+    if true_labels is not None:
+        save_figure(
+            plot_embedding_categories(
+                embeddings,
+                true_labels,
+                title="scRAW latent space colored by ground-truth labels",
+                random_state=seed,
+            ),
+            output_dir / "latent_ground_truth.png",
+        )
+
+
+def _load_checkpoint_model(
+    checkpoint_path: str | Path,
+    input_dim: int,
+    config: ScRAWConfig,
+    device: torch.device,
+) -> MLPAutoencoder:
+    """Rebuild one autoencoder and load a saved state dict onto the target device."""
+    model = MLPAutoencoder(input_dim=input_dim, config=config.model).to(device)
+    state_dict = torch.load(
+        Path(checkpoint_path).expanduser().resolve(),
+        map_location=device,
+        weights_only=True,
+    )
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
 
 def run_pipeline(config: ScRAWConfig | str | Path) -> Dict[str, Any]:
@@ -237,4 +296,115 @@ def run_pipeline(config: ScRAWConfig | str | Path) -> Dict[str, Any]:
         "cell_weights": result.cell_weights,
         "loss_history": result.loss_history,
         "output_dir": str(output_dir),
+    }
+
+
+def run_inference_from_checkpoint(
+    config: ScRAWConfig | str | Path,
+    checkpoint_path: str | Path,
+    output_dir: Optional[str | Path] = None,
+    data_path: Optional[str | Path] = None,
+    device: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Replay preprocessing, encoding, clustering, and metrics from saved weights only."""
+    if isinstance(config, ScRAWConfig):
+        config = ScRAWConfig.from_dict(config.to_dict())
+    else:
+        config = load_config(config)
+
+    if output_dir is not None:
+        config.data.output_dir = str(output_dir)
+    if data_path is not None:
+        config.data.data_path = str(data_path)
+    if device is not None:
+        config.runtime.device = str(device)
+
+    resolved_output_dir = Path(config.data.output_dir).expanduser().resolve()
+    output_paths = _prepare_output_dirs(resolved_output_dir)
+    resolved_checkpoint_path = Path(checkpoint_path).expanduser().resolve()
+
+    import scanpy as sc
+
+    adata = sc.read_h5ad(Path(config.data.data_path).expanduser().resolve())
+    adata_proc = preprocess_adata(adata, config.preprocessing)
+    label_key = _detect_label_key(adata_proc, config.data.label_key)
+    true_labels = (
+        None
+        if label_key is None
+        else np.asarray(adata_proc.obs[label_key].astype(str).to_numpy(), dtype=object)
+    )
+    batch_key = _detect_batch_key(
+        adata_proc,
+        preferred=str(config.batch_correction.key or "").strip() or None,
+    )
+    X_proc = np.asarray(adata_proc.X, dtype=np.float32)
+
+    trainer = ScRAWTrainer(config)
+    trainer._set_random_seeds()
+    model = _load_checkpoint_model(
+        checkpoint_path=resolved_checkpoint_path,
+        input_dim=int(X_proc.shape[1]),
+        config=config,
+        device=trainer.device,
+    )
+    embeddings = encode_in_batches(
+        model,
+        X_proc,
+        device=trainer.device,
+        batch_size=int(config.training.batch_size),
+    )
+    final_labels = final_clustering(
+        embeddings,
+        config=config.clustering,
+        runtime=config.runtime,
+    )
+    metrics = compute_metrics(
+        labels_true=true_labels,
+        labels_pred=final_labels,
+        embeddings=embeddings,
+    )
+
+    config_used = config.to_dict()
+    summary = {
+        "mode": "inference_only",
+        "checkpoint_path": str(resolved_checkpoint_path),
+        "label_key": label_key,
+        "batch_key": batch_key,
+        "n_cells": int(adata_proc.n_obs),
+        "n_genes": int(adata_proc.n_vars),
+        "device": str(trainer.device),
+        "metrics": metrics,
+        "loss_history": [],
+    }
+
+    (output_paths["config"] / "config_used.json").write_text(
+        json.dumps(_as_jsonable(config_used), indent=2),
+        encoding="utf-8",
+    )
+    (output_paths["results"] / "results.json").write_text(
+        json.dumps(_as_jsonable(summary), indent=2),
+        encoding="utf-8",
+    )
+    _save_metrics_csv(metrics, output_paths["results"] / "analysis_results.csv")
+    _save_inference_arrays(embeddings, final_labels, output_paths["results"])
+
+    if bool(config.outputs.save_figures):
+        _save_inference_figures(
+            embeddings=embeddings,
+            labels=final_labels,
+            true_labels=true_labels,
+            output_dir=output_paths["figures"],
+            seed=int(config.runtime.seed),
+        )
+
+    return {
+        "config": config_used,
+        "checkpoint_path": str(resolved_checkpoint_path),
+        "label_key": label_key,
+        "batch_key": batch_key,
+        "metrics": metrics,
+        "embeddings": embeddings,
+        "labels": final_labels,
+        "output_dir": str(resolved_output_dir),
+        "mode": "inference_only",
     }
