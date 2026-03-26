@@ -5,7 +5,7 @@
     "label_key": "Group"
   },
   "runtime": {
-    "seed": 42,
+    "seed": 60,
     "device": "cuda",
     "strict_repro": true
   },
