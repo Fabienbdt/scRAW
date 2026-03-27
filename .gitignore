@@ -29,3 +29,7 @@ analysis_tmp/
 *.log
 tmp_*.h5ad
 .tmp_scrbenchmark_remove_claude/
+
+# Private/local-only content that should not ship in the public repo
+/docs/
+/configs/default_scraw_py31012_test.json
