@@ -119,12 +119,20 @@ def pseudo_labels(
         return kmeans_labels(emb, k=k, seed=runtime.seed)
 
 
-def _reassign_noise_to_centroids(embeddings: np.ndarray, labels: np.ndarray) -> np.ndarray:
+def _reassign_noise_to_centroids(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    seed: int,
+) -> np.ndarray:
     """Reassign HDBSCAN noise points to the nearest non-noise centroid."""
     labels = np.asarray(labels, dtype=np.int64).copy()
     keep = labels >= 0
     if not np.any(keep):
-        return kmeans_labels(embeddings, k=max(2, min(embeddings.shape[0] - 1, 8)), seed=42)
+        return kmeans_labels(
+            embeddings,
+            k=max(2, min(embeddings.shape[0] - 1, 8)),
+            seed=seed,
+        )
 
     unique_clusters = sorted(np.unique(labels[keep]).tolist())
     centroids = np.asarray(
@@ -182,7 +190,7 @@ def final_clustering(
             return kmeans_labels(emb, k=fallback_k, seed=runtime.seed)
 
     if bool(config.hdbscan_reassign_noise) and np.any(labels < 0):
-        labels = _reassign_noise_to_centroids(emb, labels)
+        labels = _reassign_noise_to_centroids(emb, labels, seed=runtime.seed)
 
     if np.any(labels < 0):
         labels = labels.copy()
