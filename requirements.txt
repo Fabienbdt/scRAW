@@ -1,8 +1,9 @@
-# Exact environment used for the validated Baron seed=42 reproduction.
-# Tested on Linux x86_64 with Python 3.12.3 and NVIDIA CUDA 12.4.
+# Exact environment used for the validated Baron seed=60 reproduction.
 # Install with:
 #   python3.12 -m pip install --upgrade pip
 #   python3.12 -m pip install -r requirements.txt
+#
+# NOTE: seed=60 is the canonical reference for reproducibility.
 #
 # This file intentionally pins the exact dependency versions and the CUDA build
 # of PyTorch used for the reference run. It is not meant to be cross-platform.

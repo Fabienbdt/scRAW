@@ -66,11 +66,11 @@ Python is launched from a different working directory.
 ## Run scRAW
 
 The default configuration in `configs/default_scraw.json` is the recommended
-entry point. It uses:
+entry point. It uses seed `60` for reproducibility and:
 
 - `data/baron_human_pancreas.h5ad`
 - `results/default_run`
-- `seed = 42`
+- `seed = 60`
 - `device = "cuda"`
 - `strict_repro = true`
 
