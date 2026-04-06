@@ -51,7 +51,7 @@ def plot_embedding_categories(
     embeddings: np.ndarray,
     labels: Iterable[object],
     title: str,
-    random_state: int = 42,
+    random_state: int = 60,
 ) -> Optional[plt.Figure]:
     """Plot a 2D projection colored by categorical labels."""
     emb_2d = _compute_2d_projection(embeddings, random_state=random_state)
@@ -101,7 +101,7 @@ def plot_embedding_weights(
     embeddings: np.ndarray,
     weights: np.ndarray,
     title: str,
-    random_state: int = 42,
+    random_state: int = 60,
 ) -> Optional[plt.Figure]:
     """Plot a 2D projection colored by continuous cell weights."""
     emb_2d = _compute_2d_projection(embeddings, random_state=random_state)
