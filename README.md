@@ -83,34 +83,6 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 python -c 'from scraw import load_config, run_pipeline; config = load_config("configs/default_scraw.json"); result = run_pipeline(config); print(result["metrics"]); print(result["output_dir"])'
 ```
 
-## Replay Inference From Saved Weights
-
-To test whether another machine reproduces the same results when training is
-removed from the equation, replay only preprocessing, checkpoint loading,
-encoding, clustering, and metric computation from a saved run.
-
-Copy these two files from the reference machine:
-
-- `config/config_used.json`
-- `models/autoencoder.pt`
-
-Then run from the repository root on the target machine:
-
-```bash
-cd scRAW
-source .venv/bin/activate
-python scripts/run_inference_from_checkpoint.py \
-  --config /path/to/copied/config_used.json \
-  --checkpoint /path/to/copied/autoencoder.pt \
-  --data-path "$PWD/data/baron_human_pancreas.h5ad" \
-  --output-dir "$PWD/results/inference_from_deep4" \
-  --device cuda
-```
-
-If inference-only metrics now match the reference machine, the discrepancy comes
-from training. If they still differ, the remaining gap is in preprocessing,
-checkpoint replay, embedding computation, or final clustering.
-
 ## Configuration
 
 The default configuration lives in `configs/default_scraw.json`.
