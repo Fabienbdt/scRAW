@@ -74,7 +74,7 @@ The default run uses:
 
 - `data/baron_human_pancreas.h5ad`
 - `results/default_run`
-- `seed = 60`
+- `seed = 64`
 - `device = "auto"`
 - `strict_repro = true`
 
