@@ -36,17 +36,17 @@ class PreprocessingConfig:
 @dataclass
 class ModelConfig:
     hidden_layers: list[int] = field(default_factory=lambda: [512, 256, 128])
-    latent_dim: int = 192
+    latent_dim: int = 256
     dropout: float = 0.3
 
 
 @dataclass
 class TrainingConfig:
-    epochs: int = 210
-    warmup_epochs: int = 74
+    epochs: int = 120
+    warmup_epochs: int = 55
     batch_size: int = 192
-    learning_rate: float = 0.00233670337683859
-    masking_rate: float = 0.15
+    learning_rate: float = 0.00164076083297036
+    masking_rate: float = 0.1
     masking_value: float = 0.0
     masked_recon_weight: float = 0.8
     masking_in_weighted_phase: bool = True
@@ -55,24 +55,25 @@ class TrainingConfig:
 
 @dataclass
 class WeightingConfig:
-    weight_exponent: float = 0.7
-    cluster_density_alpha: float = 0.3
+    weight_exponent: float = 0.2
+    cluster_density_alpha: float = 0.3483603718613933
+    weight_fusion_mode: str = "multiplicative"
     density_knn_k: int = 15
     density_weight_exponent: float = 1.0
-    density_weight_clip: float = 8.0
-    dynamic_weight_momentum: float = 0.85
-    dynamic_weight_update_interval: int = 10
-    min_cell_weight: float = 0.45
-    max_cell_weight: float = 8.0
+    density_weight_clip: float = 3.0
+    dynamic_weight_momentum: float = 0.6884621079434989
+    dynamic_weight_update_interval: int = 20
+    min_cell_weight: float = 0.3845423008053828
+    max_cell_weight: float = 10.0
 
 
 @dataclass
 class TripletConfig:
     enabled: bool = True
-    weight: float = 0.2346243650039478
-    start_epoch: int = 84
+    weight: float = 0.05007581780188212
+    start_epoch: int = 60
     margin: float = 0.4
-    min_anchor_weight: float = 1.8
+    min_anchor_weight: float = 1.2
     max_anchors_per_batch: int = 64
 
 
@@ -83,19 +84,19 @@ class ClusteringConfig:
     pseudo_k_min: int = 8
     pseudo_k_max: int = 30
     hdbscan_min_cluster_size: int = 8
-    hdbscan_min_samples: int = 8
+    hdbscan_min_samples: int = 6
     hdbscan_cluster_selection_method: str = "eom"
-    hdbscan_reassign_noise: bool = True
+    hdbscan_reassign_noise: bool = False
 
 
 @dataclass
 class BatchCorrectionConfig:
     enabled: bool = True
     key: str = "batch"
-    adversarial_weight: float = 0.056150696336115635
-    adversarial_lambda: float = 1.75
-    start_epoch: int = 55
-    ramp_epochs: int = 60
+    adversarial_weight: float = 0.11763398875166495
+    adversarial_lambda: float = 1.0
+    start_epoch: int = 30
+    ramp_epochs: int = 30
     mmd_weight: float = 0.0
 
 

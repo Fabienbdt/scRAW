@@ -39,7 +39,7 @@ selection.
 
 ## Installation
 
-For the validated Baron run, use the same environment as the reference local
+For the stable default run, use the same environment as the reference local
 run:
 
 - Python `3.12.3`
@@ -65,13 +65,17 @@ Python is launched from a different working directory.
 
 ## Run scRAW
 
-The default configuration in `configs/default_scraw.json` is the recommended
-entry point. It uses seed `60` for reproducibility and:
+The built-in defaults are the recommended entry point. They use the stable
+default hyperparameters directly in code, so no preset selection is needed.
+The shipped `configs/default_scraw.json` mirrors the same values for users who
+prefer a JSON file.
+
+The default run uses:
 
 - `data/baron_human_pancreas.h5ad`
 - `results/default_run`
 - `seed = 60`
-- `device = "cuda"`
+- `device = "auto"`
 - `strict_repro = true`
 
 Run scRAW from the repository root with:
@@ -80,12 +84,13 @@ Run scRAW from the repository root with:
 cd scRAW
 source .venv/bin/activate
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
-python -c 'from scraw import load_config, run_pipeline; config = load_config("configs/default_scraw.json"); result = run_pipeline(config); print(result["metrics"]); print(result["output_dir"])'
+python -c 'from scraw import run_pipeline; result = run_pipeline(); print(result["metrics"]); print(result["output_dir"])'
 ```
 
 ## Configuration
 
-The default configuration lives in `configs/default_scraw.json`.
+The stable default configuration is built into `src/scraw/config.py`. A matching
+JSON copy lives in `configs/default_scraw.json`.
 The main sections are:
 
 - `data`: input dataset, output directory, optional label key.

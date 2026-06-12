@@ -215,9 +215,11 @@ def _load_checkpoint_model(
     return model
 
 
-def run_pipeline(config: ScRAWConfig | str | Path) -> Dict[str, Any]:
-    """Run the default scRAW pipeline from a config object or JSON file."""
-    if not isinstance(config, ScRAWConfig):
+def run_pipeline(config: ScRAWConfig | str | Path | None = None) -> Dict[str, Any]:
+    """Run scRAW from the built-in stable default or from a config override."""
+    if config is None:
+        config = ScRAWConfig()
+    elif not isinstance(config, ScRAWConfig):
         config = load_config(config)
 
     output_dir = Path(config.data.output_dir).expanduser().resolve()

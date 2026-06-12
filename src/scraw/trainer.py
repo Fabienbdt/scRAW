@@ -147,10 +147,25 @@ def _combined_cell_weights(
         density_weight_clip=config.weighting.density_weight_clip,
     )
 
-    alpha = float(np.clip(config.weighting.cluster_density_alpha, 0.0, 1.0))
-    cluster_component_raw = (alpha * cluster_weights).astype(np.float32, copy=False)
-    density_component_raw = ((1.0 - alpha) * density_weights).astype(np.float32, copy=False)
-    fused_raw = (cluster_component_raw + density_component_raw).astype(np.float32, copy=False)
+    fusion_mode = str(config.weighting.weight_fusion_mode or "additive").strip().lower()
+    if fusion_mode == "multiplicative":
+        cluster_component_raw = np.asarray(cluster_weights, dtype=np.float32)
+        density_component_raw = np.asarray(density_weights, dtype=np.float32)
+        fused_raw = (cluster_component_raw * density_component_raw).astype(
+            np.float32,
+            copy=False,
+        )
+    else:
+        alpha = float(np.clip(config.weighting.cluster_density_alpha, 0.0, 1.0))
+        cluster_component_raw = (alpha * cluster_weights).astype(np.float32, copy=False)
+        density_component_raw = ((1.0 - alpha) * density_weights).astype(
+            np.float32,
+            copy=False,
+        )
+        fused_raw = (cluster_component_raw + density_component_raw).astype(
+            np.float32,
+            copy=False,
+        )
 
     mean_fused = float(np.nanmean(fused_raw))
     if not np.isfinite(mean_fused) or mean_fused <= 0.0:
@@ -159,10 +174,14 @@ def _combined_cell_weights(
     else:
         fused_normalized = (fused_raw / mean_fused).astype(np.float32, copy=False)
 
+    max_cell_weight = max(
+        float(config.weighting.min_cell_weight),
+        float(config.weighting.max_cell_weight),
+    )
     fused_weight = np.clip(
         fused_normalized,
         float(config.weighting.min_cell_weight),
-        float(config.weighting.max_cell_weight),
+        max_cell_weight,
     ).astype(np.float32, copy=False)
 
     return {
