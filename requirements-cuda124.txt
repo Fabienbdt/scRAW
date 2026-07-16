@@ -1,0 +1,5 @@
+# Explicitly named compatibility alias for the authoritative reference lock.
+# The pinned dependency list remains in requirements.txt to preserve the
+# repository's established reproduction command.
+
+-r requirements.txt

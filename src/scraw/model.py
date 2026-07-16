@@ -57,7 +57,7 @@ def parse_hidden_layers(raw: Iterable[int] | str | None) -> List[int]:
 
 
 def resolve_device(requested: str) -> torch.device:
-    """Resolve `auto|cpu|cuda|mps` into a concrete torch device."""
+    """Resolve a supported device string into a concrete torch device."""
     requested = str(requested or "auto").strip().lower()
 
     if requested == "auto":
@@ -68,9 +68,23 @@ def resolve_device(requested: str) -> torch.device:
             return torch.device("mps")
         return torch.device("cpu")
 
-    if requested == "cuda":
+    if requested == "cpu":
+        return torch.device("cpu")
+
+    if requested == "cuda" or requested.startswith("cuda:"):
+        try:
+            cuda_device = torch.device(requested)
+        except (RuntimeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid CUDA device '{requested}'. Use 'cuda' or 'cuda:<index>'."
+            ) from exc
         if torch.cuda.is_available():
-            return torch.device("cuda")
+            if cuda_device.index is not None and cuda_device.index >= torch.cuda.device_count():
+                raise ValueError(
+                    f"CUDA device index {cuda_device.index} is unavailable; "
+                    f"found {torch.cuda.device_count()} CUDA device(s)."
+                )
+            return cuda_device
         logger.warning("CUDA requested but unavailable. Falling back to CPU.")
         return torch.device("cpu")
 
@@ -81,7 +95,9 @@ def resolve_device(requested: str) -> torch.device:
         logger.warning("MPS requested but unavailable. Falling back to CPU.")
         return torch.device("cpu")
 
-    return torch.device("cpu")
+    raise ValueError(
+        f"Unsupported device '{requested}'. Use auto, cpu, cuda, cuda:<index>, or mps."
+    )
 
 
 class MLPAutoencoder(nn.Module):

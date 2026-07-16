@@ -30,6 +30,12 @@ def _has_negative_values(matrix: Any) -> bool:
     return bool(arr.size and np.nanmin(arr) < 0)
 
 
+def _has_nonfinite_values(matrix: Any) -> bool:
+    """Return whether a dense or sparse expression matrix contains NaN/Inf."""
+    values = np.asarray(matrix.data) if sparse.issparse(matrix) else np.asarray(matrix)
+    return bool(values.size and not np.all(np.isfinite(values)))
+
+
 def _to_dense_float32(matrix: Any) -> np.ndarray:
     """Convert one matrix to a dense float32 NumPy array."""
     if sparse.issparse(matrix):
@@ -38,11 +44,17 @@ def _to_dense_float32(matrix: Any) -> np.ndarray:
 
 
 def preprocess_adata(adata: Any, params: Any) -> Any:
-    """Apply the default scRAW preprocessing path on a raw-count AnnData object."""
+    """Apply filtering and the configured expression preprocessing path."""
     import scanpy as sc
 
     cfg = _as_dict(params)
     adata = adata.copy()
+
+    input_mode = str(cfg.get("input_mode", "auto")).strip().lower()
+    if input_mode not in {"auto", "raw", "preprocessed"}:
+        raise ValueError("input_mode must be one of: auto, raw, preprocessed.")
+    if _has_nonfinite_values(adata.X):
+        raise ValueError("Input expression matrix contains NaN or infinite values.")
 
     if "original_X" not in adata.layers:
         X_orig = adata.X
@@ -67,11 +79,21 @@ def preprocess_adata(adata: Any, params: Any) -> Any:
     if adata.n_obs == 0 or adata.n_vars == 0:
         raise ValueError("Preprocessing removed all cells or genes.")
 
-    looks_processed = _has_negative_values(adata.X)
-    if looks_processed:
-        logger.warning(
-            "Input matrix contains negative values; assuming it is already preprocessed."
+    contains_negative_values = _has_negative_values(adata.X)
+    if input_mode == "raw" and contains_negative_values:
+        raise ValueError(
+            "input_mode='raw' is incompatible with negative expression values. "
+            "Use input_mode='preprocessed' for scaled data."
         )
+
+    looks_processed = input_mode == "preprocessed" or (
+        input_mode == "auto" and contains_negative_values
+    )
+    if looks_processed:
+        if input_mode == "auto":
+            logger.warning(
+                "Input matrix contains negative values; assuming it is already preprocessed."
+            )
     else:
         sc.pp.normalize_total(adata, target_sum=float(cfg.get("target_sum", 20000.0)))
         sc.pp.log1p(adata)

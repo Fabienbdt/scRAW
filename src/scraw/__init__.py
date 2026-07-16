@@ -1,5 +1,6 @@
 """Public API for the scRAW package."""
 
+from ._version import __version__
 from .config import ScRAWConfig, load_config, save_config
 
 
@@ -17,6 +18,7 @@ def run_inference_from_checkpoint(*args, **kwargs):
     return _run_inference_from_checkpoint(*args, **kwargs)
 
 __all__ = [
+    "__version__",
     "ScRAWConfig",
     "load_config",
     "save_config",

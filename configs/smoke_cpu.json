@@ -1,0 +1,81 @@
+{
+  "data": {
+    "data_path": "data/baron_human_pancreas.h5ad",
+    "output_dir": "results/smoke_cpu",
+    "label_key": "Group"
+  },
+  "runtime": {
+    "seed": 42,
+    "device": "cpu",
+    "strict_repro": true
+  },
+  "preprocessing": {
+    "input_mode": "auto",
+    "min_genes_per_cell": 200,
+    "max_genes_per_cell": null,
+    "min_cells_per_gene": 3,
+    "target_sum": 20000.0,
+    "n_top_genes": 2000,
+    "hvg_flavor": "seurat",
+    "scale_max_value": 10.0
+  },
+  "model": {
+    "hidden_layers": [512, 256, 128],
+    "latent_dim": 256,
+    "dropout": 0.3
+  },
+  "training": {
+    "epochs": 2,
+    "warmup_epochs": 1,
+    "batch_size": 192,
+    "learning_rate": 0.00164076083297036,
+    "masking_rate": 0.1,
+    "masking_value": 0.0,
+    "masked_recon_weight": 0.8,
+    "masking_in_weighted_phase": true,
+    "gradient_clip": 5.0
+  },
+  "weighting": {
+    "weight_exponent": 0.2,
+    "cluster_density_alpha": 0.3483603718613933,
+    "weight_fusion_mode": "multiplicative",
+    "density_knn_k": 15,
+    "density_weight_exponent": 1.0,
+    "density_weight_clip": 3.0,
+    "dynamic_weight_momentum": 0.6884621079434989,
+    "dynamic_weight_update_interval": 20,
+    "min_cell_weight": 0.3845423008053828,
+    "max_cell_weight": 10.0
+  },
+  "triplet": {
+    "enabled": true,
+    "weight": 0.05007581780188212,
+    "start_epoch": 60,
+    "margin": 0.4,
+    "min_anchor_weight": 1.2,
+    "max_anchors_per_batch": 64
+  },
+  "clustering": {
+    "pseudo_label_method": "leiden",
+    "pseudo_k": 0,
+    "pseudo_k_min": 8,
+    "pseudo_k_max": 30,
+    "hdbscan_min_cluster_size": 8,
+    "hdbscan_min_samples": 6,
+    "hdbscan_cluster_selection_method": "eom",
+    "hdbscan_reassign_noise": false
+  },
+  "batch_correction": {
+    "enabled": true,
+    "key": "batch",
+    "adversarial_weight": 0.11763398875166495,
+    "adversarial_lambda": 1.0,
+    "start_epoch": 30,
+    "ramp_epochs": 30,
+    "mmd_weight": 0.0
+  },
+  "outputs": {
+    "save_figures": false,
+    "save_model": false
+  }
+}

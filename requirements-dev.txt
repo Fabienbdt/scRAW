@@ -1,0 +1,6 @@
+-r requirements-portable.txt
+-r requirements-test.txt
+
+build>=1.2,<2
+ruff>=0.8,<1
+twine>=5,<7

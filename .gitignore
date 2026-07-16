@@ -21,6 +21,9 @@ env/
 # Runtime caches
 .mypy_cache/
 .pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .ipynb_checkpoints/
 
 # Local outputs (optional)
@@ -28,8 +31,6 @@ results/
 analysis_tmp/
 *.log
 tmp_*.h5ad
-.tmp_scrbenchmark_remove_claude/
 
-# Private/local-only content that should not ship in the public repo
-/docs/
+# Private/local-only configuration
 /configs/default_scraw_py31012_test.json

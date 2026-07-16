@@ -295,6 +295,7 @@ class ScRAWTrainer:
     """Train the scRAW model on a preprocessed matrix."""
 
     def __init__(self, config: ScRAWConfig) -> None:
+        config.validate()
         self.config = config
         self._configure_runtime_environment()
         self.device = resolve_device(config.runtime.device)
@@ -341,10 +342,14 @@ class ScRAWTrainer:
         X = np.asarray(X, dtype=np.float32)
         if X.ndim != 2 or X.shape[0] == 0 or X.shape[1] == 0:
             raise ValueError("Input matrix must be a non-empty 2D array.")
+        if X.shape[0] < 2:
+            raise ValueError("At least two cells are required for BatchNorm and clustering.")
+        if not np.all(np.isfinite(X)):
+            raise ValueError("Input matrix contains NaN or infinite values.")
         return X
 
     def _resolve_clustering_config(self, labels: Optional[np.ndarray]) -> Any:
-        """Resolve the pseudo-label target K from config or provided labels."""
+        """Resolve K, using the known class count required by the reference protocol."""
         resolved_pseudo_k = 0
         if int(self.config.clustering.pseudo_k) > 1:
             resolved_pseudo_k = int(self.config.clustering.pseudo_k)
@@ -426,9 +431,14 @@ class ScRAWTrainer:
 
         x_tensor_cpu = torch.from_numpy(X).float()
         index_tensor_cpu = torch.arange(X.shape[0], dtype=torch.long)
+        batch_size = min(int(self.config.training.batch_size), int(X.shape[0]))
+        while X.shape[0] % batch_size == 1 and batch_size < X.shape[0]:
+            # BatchNorm cannot train on a final singleton. Increasing the batch
+            # size keeps every cell while avoiding that invalid final batch.
+            batch_size += 1
         return DataLoader(
             TensorDataset(x_tensor_cpu, index_tensor_cpu),
-            batch_size=int(self.config.training.batch_size),
+            batch_size=batch_size,
             shuffle=True,
         )
 
@@ -738,6 +748,8 @@ class ScRAWTrainer:
 
         X = self._validate_input_matrix(X)
         n_cells, n_features = X.shape
+        if labels is not None and len(labels) != n_cells:
+            raise ValueError("Label length does not match the number of cells.")
         clustering_config = self._resolve_clustering_config(labels)
         batch_state = self._prepare_batch_adversarial(batch_ids=batch_ids, n_cells=n_cells)
         model, params, optimizer, scheduler = self._build_model_components(
@@ -780,15 +792,15 @@ class ScRAWTrainer:
                 batch_adv_loss=epoch_stats.batch_adv_loss,
             )
             if self._should_print_epoch(epoch, total_epochs):
-                print(
-                    (
-                        f"[scRAW] Epoch {epoch + 1}/{total_epochs} "
-                        f"phase={phase} "
-                        f"total_loss={epoch_stats.total_loss:.4f} "
-                        f"recon_loss={epoch_stats.reconstruction_loss:.4f} "
-                        f"triplet_loss={epoch_stats.triplet_loss:.4f}"
-                    ),
-                    flush=True,
+                logger.info(
+                    "Epoch %d/%d phase=%s total_loss=%.4f recon_loss=%.4f "
+                    "triplet_loss=%.4f",
+                    epoch + 1,
+                    total_epochs,
+                    phase,
+                    epoch_stats.total_loss,
+                    epoch_stats.reconstruction_loss,
+                    epoch_stats.triplet_loss,
                 )
 
         return self._finalize_training(
